@@ -88,25 +88,49 @@
             const uploadFile = async (e) => {
                 const file = e.target.files[0];
                 if (!file) return;
-                setIsUploading(true);
+                
+                setIsUploading(true); // Shows the ⏳
+                
                 const fileExt = file.name.split('.').pop();
                 const fileName = `${Math.random()}.${fileExt}`;
                 const filePath = `chat_media/${fileName}`;
 
-                await supabaseClient.storage.from('uploads').upload(filePath, file);
-                const { data: { publicUrl } } = supabaseClient.storage.from('uploads').getPublicUrl(filePath);
+                // 1. Upload to Storage
+                const { error: uploadError } = await supabaseClient.storage
+                    .from('uploads')
+                    .upload(filePath, file);
+
+                if (uploadError) {
+                    console.error(uploadError);
+                    setIsUploading(false);
+                    return alert("Upload failed: " + uploadError.message);
+                }
+
+                // 2. Get the Link
+                const { data: { publicUrl } } = supabaseClient.storage
+                    .from('uploads')
+                    .getPublicUrl(filePath);
 
                 let type = 'file';
                 if (file.type.startsWith('image/')) type = 'image';
                 else if (file.type.startsWith('video/')) type = 'video';
 
-                await supabaseClient.from('messages').insert([{ 
-                    sender_id: session.user.id, receiver_id: currentChat === 'public' ? null : currentChat, 
-                    content: `Sent a ${type}`, file_url: publicUrl, file_type: type
+                // 3. Save to Messages Table
+                const { error: insertError } = await supabaseClient.from('messages').insert([{ 
+                    sender_id: session.user.id, 
+                    receiver_id: currentChat === 'public' ? null : currentChat, 
+                    content: `Sent a ${type}`, // This acts as a backup text
+                    file_url: publicUrl,       // THIS MUST MATCH THE SQL COLUMN
+                    file_type: type            // THIS MUST MATCH THE SQL COLUMN
                 }]);
-                setIsUploading(false);
-            };
 
+                if (insertError) {
+                    console.error(insertError);
+                    alert("Database Error: Did you run the SQL fix?");
+                }
+
+                setIsUploading(false); // Removes the ⏳
+            };
             const sendMsg = async () => {
                 if (!text.trim()) return;
                 await supabaseClient.from('messages').insert([{ sender_id: session.user.id, receiver_id: currentChat === 'public' ? null : currentChat, content: text }]);
