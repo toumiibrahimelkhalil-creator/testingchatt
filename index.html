@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>K-D World | Private & Secure</title>
+    <title>K-D World | Secure Chat</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -12,11 +12,9 @@
     <style>
         body { background: #0a0a0c; color: #e2e2e2; font-family: 'Inter', sans-serif; height: 100vh; overflow: hidden; }
         .glass { background: rgba(20, 20, 25, 0.8); backdrop-filter: blur(12px); border-right: 1px solid rgba(255,255,255,0.1); }
-        .active-tab { border-left: 4px solid #d500f9; background: rgba(213, 0, 249, 0.1); }
-        .msg-mine { background: #4a148c; border-radius: 12px 12px 0 12px; }
-        .msg-theirs { background: #1e1e24; border: 1px solid #333; border-radius: 12px 12px 12px 0; }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-thumb { background: #444; border-radius: 10px; }
+        .active-tab { border-left: 4px solid #d500f9; background: rgba(213, 0, 249, 0.1); color: #d500f9; }
+        .msg-mine { background: #4a148c; border-radius: 12px 12px 0 12px; align-self: flex-end; }
+        .msg-theirs { background: #1e1e24; border: 1px solid #333; border-radius: 12px 12px 12px 0; align-self: flex-start; }
     </style>
 </head>
 <body>
@@ -39,13 +37,11 @@
             const [requests, setRequests] = useState([]);
             const [text, setText] = useState('');
             const [searchUsername, setSearchUsername] = useState('');
-            const [uploading, setUploading] = useState(false);
             const chatEndRef = useRef(null);
 
             useEffect(() => {
                 supabaseClient.auth.getSession().then(({ data: { session } }) => setSession(session));
-                const { data: { subscription } } = supabaseClient.auth.onAuthStateChange((_event, session) => setSession(session));
-                return () => subscription.unsubscribe();
+                supabaseClient.auth.onAuthStateChange((_event, session) => setSession(session));
             }, []);
 
             useEffect(() => {
@@ -53,34 +49,37 @@
                     fetchProfile();
                     fetchFriends();
                     fetchRequests();
-                }
-            }, [session]);
-
-            useEffect(() => {
-                if (session) {
-                    fetchMessages();
-                    const channel = supabaseClient.channel('realtime:messages')
-                        .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'messages' }, () => fetchMessages())
+                    
+                    const msgChannel = supabaseClient.channel('db-changes')
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => fetchMessages())
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'friends' }, () => { fetchFriends(); fetchRequests(); })
                         .subscribe();
-                    return () => supabaseClient.removeChannel(channel);
+
+                    return () => supabaseClient.removeChannel(msgChannel);
                 }
-            }, [currentChat, session]);
+            }, [session, currentChat]);
 
             useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
             const fetchProfile = async () => {
                 const { data } = await supabaseClient.from('profiles').select('*').eq('id', session.user.id).single();
-                if (data) setProfile(data);
+                setProfile(data);
             };
 
             const fetchFriends = async () => {
-                const { data } = await supabaseClient.from('friends').select('friend_id, profiles!friends_friend_id_fkey(*)').eq('user_id', session.user.id).eq('status', 1);
-                if (data) setFriends(data);
+                const { data } = await supabaseClient.from('friends')
+                    .select('*, profiles!friends_friend_id_fkey(*)')
+                    .eq('user_id', session.user.id)
+                    .eq('status', 1);
+                setFriends(data || []);
             };
 
             const fetchRequests = async () => {
-                const { data } = await supabaseClient.from('friends').select('id, user_id, profiles!friends_user_id_fkey(*)').eq('friend_id', session.user.id).eq('status', 0);
-                if (data) setRequests(data);
+                const { data } = await supabaseClient.from('friends')
+                    .select('*, profiles!friends_user_id_fkey(*)')
+                    .eq('friend_id', session.user.id)
+                    .eq('status', 0);
+                setRequests(data || []);
             };
 
             const fetchMessages = async () => {
@@ -88,57 +87,39 @@
                 if (currentChat === 'public') query = query.is('receiver_id', null);
                 else query = query.or(`and(sender_id.eq.${session.user.id},receiver_id.eq.${currentChat}),and(sender_id.eq.${currentChat},receiver_id.eq.${session.user.id})`);
                 const { data } = await query;
-                if (data) setMessages(data);
+                setMessages(data || []);
             };
 
-            const handleUpdateProfile = async (newUsername) => {
-                const { error } = await supabaseClient.from('profiles').update({ username: newUsername }).eq('id', session.user.id);
-                if (!error) fetchProfile();
-            };
-
-            const handleFileUpload = async (e) => {
+            const updateProfilePic = async (e) => {
                 const file = e.target.files[0];
-                if (!file) return;
-                setUploading(true);
-                const fileExt = file.name.split('.').pop();
-                const fileName = `${Math.random()}.${fileExt}`;
-                const { data, error } = await supabaseClient.storage.from('uploads').upload(fileName, file);
-                
-                if (data) {
-                    const { data: { publicUrl } } = supabaseClient.storage.from('uploads').getPublicUrl(fileName);
-                    await supabaseClient.from('messages').insert([{
-                        sender_id: session.user.id,
-                        receiver_id: currentChat === 'public' ? null : currentChat,
-                        content: publicUrl // File URL sent as content
-                    }]);
-                }
-                setUploading(false);
+                const fileName = `${session.user.id}-${Math.random()}.png`;
+                await supabaseClient.storage.from('uploads').upload(fileName, file);
+                const { data: { publicUrl } } = supabaseClient.storage.from('uploads').getPublicUrl(fileName);
+                await supabaseClient.from('profiles').update({ avatar_url: publicUrl }).eq('id', session.user.id);
+                fetchProfile();
             };
 
             const handleAddFriend = async () => {
-                const { data: user } = await supabaseClient.from('profiles').select('id').eq('username', searchUsername).single();
-                if (user) {
-                    await supabaseClient.from('friends').insert([{ user_id: session.user.id, friend_id: user.id, status: 0 }]);
-                    alert("Request Sent!");
-                    setSearchUsername('');
-                }
+                const { data: target } = await supabaseClient.from('profiles').select('id').eq('username', searchUsername).single();
+                if (!target) return alert("User not found");
+                await supabaseClient.from('friends').insert([{ user_id: session.user.id, friend_id: target.id, status: 0 }]);
+                alert("Request sent!");
+                setSearchUsername('');
             };
 
-            const handleRequest = async (id, accept) => {
-                if (accept) {
-                    const { data: req } = await supabaseClient.from('friends').select('*').eq('id', id).single();
-                    await supabaseClient.from('friends').update({ status: 1 }).eq('id', id);
-                    await supabaseClient.from('friends').insert([{ user_id: session.user.id, friend_id: req.user_id, status: 1 }]);
-                } else {
-                    await supabaseClient.from('friends').delete().eq('id', id);
-                }
+            const handleAccept = async (id) => {
+                await supabaseClient.from('friends').update({ status: 1 }).eq('id', id);
                 fetchRequests();
                 fetchFriends();
             };
 
             const sendMsg = async () => {
                 if (!text.trim()) return;
-                await supabaseClient.from('messages').insert([{ sender_id: session.user.id, receiver_id: currentChat === 'public' ? null : currentChat, content: text }]);
+                await supabaseClient.from('messages').insert([{ 
+                    sender_id: session.user.id, 
+                    receiver_id: currentChat === 'public' ? null : currentChat, 
+                    content: text 
+                }]);
                 setText('');
             };
 
@@ -146,97 +127,88 @@
 
             return (
                 <div className="flex h-screen">
-                    <div className="w-80 glass flex flex-col shadow-2xl z-10 border-r border-white/5">
+                    <div className="w-80 glass flex flex-col border-r border-white/10">
                         <div className="p-6 border-b border-white/10">
-                            <h2 className="text-xl font-black text-purple-400 italic">K-D WORLD</h2>
-                            {profile && (
-                                <div className="mt-4 flex items-center gap-3">
-                                    <div className="w-12 h-12 rounded-full bg-purple-900 border border-purple-500 overflow-hidden">
-                                        {profile.avatar_url ? <img src={profile.avatar_url} className="w-full h-full object-cover" /> : null}
+                            <h1 className="text-xl font-black text-purple-500 italic">K-D WORLD</h1>
+                            <div className="mt-4 flex items-center gap-3">
+                                <label className="cursor-pointer group relative">
+                                    <div className="w-12 h-12 rounded-full bg-purple-900 overflow-hidden border border-purple-500">
+                                        <img src={profile?.avatar_url || 'https://via.placeholder.com/150'} className="w-full h-full object-cover" />
                                     </div>
-                                    <div className="flex-1">
-                                        <input 
-                                            className="bg-transparent font-bold text-sm focus:outline-none w-full"
-                                            defaultValue={profile.username}
-                                            onBlur={(e) => handleUpdateProfile(e.target.value)}
-                                        />
-                                        <p className="text-[10px] opacity-50 uppercase">{profile.role}</p>
-                                    </div>
-                                </div>
-                            )}
+                                    <input type="file" className="hidden" onChange={updateProfilePic} />
+                                </label>
+                                <input className="bg-transparent font-bold text-sm outline-none" value={profile?.username || ''} 
+                                    onChange={async (e) => {
+                                        setProfile({...profile, username: e.target.value});
+                                        await supabaseClient.from('profiles').update({ username: e.target.value }).eq('id', session.user.id);
+                                    }} />
+                            </div>
                         </div>
-                        
+
                         <div className="flex-1 overflow-y-auto">
-                            <button onClick={() => {setCurrentChat('public'); setCurrentChatName('Public Chamber');}} className={`w-full p-4 text-left font-bold ${currentChat === 'public' ? 'active-tab' : 'hover:bg-white/5'}`}>🌐 Public Chamber</button>
-                            
-                            <div className="p-4 border-t border-white/5">
-                                <p className="text-[10px] font-bold opacity-40 mb-2">FRIEND REQUESTS ({requests.length})</p>
-                                {requests.map(r => (
-                                    <div key={r.id} className="flex items-center justify-between bg-white/5 p-2 rounded mb-2">
-                                        <span className="text-xs font-bold">{r.profiles.username}</span>
-                                        <div className="flex gap-1">
-                                            <button onClick={() => handleRequest(r.id, true)} className="bg-green-600 px-2 py-1 rounded text-[10px]">Accept</button>
-                                            <button onClick={() => handleRequest(r.id, false)} className="bg-red-600 px-2 py-1 rounded text-[10px]">Delete</button>
-                                        </div>
+                            <button onClick={() => {setCurrentChat('public'); setCurrentChatName('Public Chamber');}} 
+                                className={`w-full p-4 text-left font-bold ${currentChat === 'public' ? 'active-tab' : 'hover:bg-white/5'}`}>
+                                🌐 Public Chamber
+                            </button>
+
+                            <div className="p-4 border-b border-white/5">
+                                <p className="text-[10px] font-bold opacity-40 mb-2">REQUESTS ({requests.length})</p>
+                                {requests.map(req => (
+                                    <div key={req.id} className="flex items-center justify-between bg-white/5 p-2 rounded mb-1">
+                                        <span className="text-xs">{req.profiles.username}</span>
+                                        <button onClick={() => handleAccept(req.id)} className="bg-green-600 px-2 py-1 rounded text-[10px]">ACCEPT</button>
                                     </div>
                                 ))}
                             </div>
 
-                            <div className="p-4 border-t border-white/5">
-                                <p className="text-[10px] font-bold opacity-40 mb-2">ADD FRIEND</p>
-                                <div className="flex gap-2">
-                                    <input className="flex-1 bg-black/40 border border-white/10 rounded px-2 py-1 text-xs" placeholder="Username..." value={searchUsername} onChange={e => setSearchUsername(e.target.value)} />
-                                    <button onClick={handleAddFriend} className="bg-purple-600 px-3 py-1 rounded text-xs">+</button>
-                                </div>
-                            </div>
-
                             <div className="p-4">
-                                <p className="text-[10px] font-bold opacity-40 mb-2">DIRECT MESSAGES</p>
+                                <p className="text-[10px] font-bold opacity-40 mb-2">PRIVATE ROOMS</p>
                                 {friends.map(f => (
-                                    <button key={f.friend_id} onClick={() => {setCurrentChat(f.friend_id); setCurrentChatName(f.profiles.username);}} className={`w-full p-2 text-left rounded mb-1 text-sm ${currentChat === f.friend_id ? 'bg-purple-600/20 text-purple-400' : 'hover:bg-white/5'}`}>
-                                        ● {f.profiles.username}
+                                    <button key={f.friend_id} onClick={() => {setCurrentChat(f.friend_id); setCurrentChatName(f.profiles.username);}}
+                                        className={`w-full p-3 text-left rounded mb-1 flex items-center gap-2 ${currentChat === f.friend_id ? 'bg-purple-600/20 text-purple-400' : 'hover:bg-white/5'}`}>
+                                        <div className="w-2 h-2 rounded-full bg-green-500"></div>
+                                        <span className="text-sm font-medium">{f.profiles.username}</span>
                                     </button>
                                 ))}
                             </div>
                         </div>
-                        <button onClick={() => supabaseClient.auth.signOut()} className="p-4 text-xs opacity-50 hover:opacity-100">Logout</button>
+
+                        <div className="p-4 border-t border-white/10">
+                            <div className="flex gap-2">
+                                <input className="flex-1 bg-black/40 border border-white/10 rounded px-2 py-1 text-xs" placeholder="Add by username..." value={searchUsername} onChange={e => setSearchUsername(e.target.value)} />
+                                <button onClick={handleAddFriend} className="bg-purple-600 px-3 rounded text-xs font-bold">+</button>
+                            </div>
+                            <button onClick={() => supabaseClient.auth.signOut()} className="w-full mt-4 text-[10px] opacity-40">Logout</button>
+                        </div>
                     </div>
 
                     <div className="flex-1 flex flex-col bg-black/20">
-                        <header className="p-4 border-b border-white/5 font-bold">{currentChatName}</header>
-                        <div className="flex-1 p-6 overflow-y-auto space-y-4">
-                            {messages.map((msg, i) => {
-                                const isMine = msg.sender_id === session.user.id;
-                                const isFile = msg.content.startsWith('http') && msg.content.includes('supabase.co/storage');
-                                return (
-                                    <div key={i} className={`flex flex-col ${isMine ? 'items-end' : 'items-start'}`}>
-                                        <span className="text-[10px] opacity-40 mb-1">{msg.profiles?.username}</span>
-                                        <div className={`p-3 max-w-sm rounded-xl ${isMine ? 'bg-purple-700' : 'bg-gray-800'}`}>
-                                            {isFile ? (
-                                                msg.content.match(/\.(jpg|jpeg|png|gif)$/i) ? 
-                                                <img src={msg.content} className="max-w-full rounded" /> : 
-                                                <video src={msg.content} controls className="max-w-full rounded" />
-                                            ) : msg.content}
-                                        </div>
+                        <header className="p-5 border-b border-white/5 font-bold">{currentChatName}</header>
+                        <div className="flex-1 p-6 overflow-y-auto flex flex-col gap-4">
+                            {messages.map((msg, i) => (
+                                <div key={i} className={`flex flex-col ${msg.sender_id === session.user.id ? 'items-end' : 'items-start'}`}>
+                                    <span className="text-[10px] opacity-30 mb-1">{msg.profiles?.username}</span>
+                                    <div className={`p-3 max-w-sm ${msg.sender_id === session.user.id ? 'msg-mine' : 'msg-theirs'}`}>
+                                        {msg.content}
                                     </div>
-                                );
-                            })}
+                                </div>
+                            ))}
                             <div ref={chatEndRef} />
                         </div>
 
-                        <div className="p-4 border-t border-white/10 flex gap-2 items-center">
-                            <label className="cursor-pointer p-2 bg-white/5 rounded-xl hover:bg-white/10">
-                                📎
-                                <input type="file" className="hidden" onChange={handleFileUpload} />
-                            </label>
-                            <input className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 focus:outline-none" placeholder="Message..." value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendMsg()} />
-                            <button onClick={sendMsg} className="bg-purple-600 px-6 py-3 rounded-xl font-bold">SEND</button>
+                        <div className="p-6">
+                            <div className="max-w-4xl mx-auto flex gap-3">
+                                <input className="flex-1 bg-white/5 border border-white/10 rounded-xl px-4 py-3 outline-none focus:border-purple-500" 
+                                    placeholder={`Message ${currentChatName}...`} value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendMsg()} />
+                                <button onClick={sendMsg} className="bg-purple-600 px-8 rounded-xl font-bold transition-all active:scale-95">SEND</button>
+                            </div>
                         </div>
                     </div>
                 </div>
             );
         }
 
+        /* AuthUI remains largely same, just updated to match styles */
         function AuthUI() {
             const [mode, setMode] = useState('login');
             const [form, setForm] = useState({ email: '', password: '', username: '', role: 'Switch' });
@@ -250,14 +222,14 @@
             };
             return (
                 <div className="h-screen flex items-center justify-center bg-black">
-                    <div className="glass p-10 rounded-3xl w-full max-w-sm border border-white/10">
-                        <h1 className="text-3xl font-black text-center mb-6 text-purple-500">K-D WORLD</h1>
+                    <div className="glass p-10 rounded-[2rem] w-full max-w-sm border border-white/10 text-center">
+                        <h1 className="text-3xl font-black italic mb-8 text-purple-500">K-D WORLD</h1>
                         <div className="space-y-4">
-                            {mode === 'signup' && <input className="w-full bg-white/5 p-3 rounded-xl border border-white/10" placeholder="Username" onChange={e => setForm({...form, username: e.target.value})} />}
-                            <input className="w-full bg-white/5 p-3 rounded-xl border border-white/10" placeholder="Email" onChange={e => setForm({...form, email: e.target.value})} />
-                            <input className="w-full bg-white/5 p-3 rounded-xl border border-white/10" type="password" placeholder="Password" onChange={e => setForm({...form, password: e.target.value})} />
-                            <button onClick={handleAction} className="w-full bg-purple-600 p-4 rounded-xl font-bold">{mode.toUpperCase()}</button>
-                            <p onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="text-center text-xs opacity-50 cursor-pointer">Switch to {mode === 'login' ? 'Signup' : 'Login'}</p>
+                            {mode === 'signup' && <input className="w-full bg-white/5 border border-white/10 p-3 rounded-xl" placeholder="Username" onChange={e => setForm({...form, username: e.target.value})} />}
+                            <input className="w-full bg-white/5 border border-white/10 p-3 rounded-xl" placeholder="Email" onChange={e => setForm({...form, email: e.target.value})} />
+                            <input className="w-full bg-white/5 border border-white/10 p-3 rounded-xl" type="password" placeholder="Password" onChange={e => setForm({...form, password: e.target.value})} />
+                            <button onClick={handleAction} className="w-full bg-purple-600 p-4 rounded-xl font-bold tracking-widest">{mode.toUpperCase()}</button>
+                            <p onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="text-xs opacity-50 cursor-pointer mt-4">Switch to {mode === 'login' ? 'Signup' : 'Login'}</p>
                         </div>
                     </div>
                 </div>
