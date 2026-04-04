@@ -15,10 +15,10 @@
         .theme-Blue { --accent: #2979ff; --bg: #000a12; }
         .theme-Black { --accent: #616161; --bg: #000000; }
 
-        body { background: var(--bg); color: #e2e2e2; font-family: 'Inter', sans-serif; transition: all 0.4s ease; }
+        body { background: var(--bg); color: #e2e2e2; font-family: 'Inter', sans-serif; transition: all 0.4s ease; height: 100vh; overflow: hidden; }
         .glass { background: var(--panel); backdrop-filter: blur(20px); border-right: 1px solid rgba(255,255,255,0.05); }
         
-        /* Role Glows */
+        /* Role Glow Effects */
         .glow-Dominator { box-shadow: 0 0 15px #ff1744; border: 2px solid #ff1744; }
         .glow-Submissive { box-shadow: 0 0 15px #00e5ff; border: 2px solid #00e5ff; }
         .glow-Switch { box-shadow: 0 0 15px #d500f9; border: 2px solid #d500f9; }
@@ -27,12 +27,16 @@
         .msg-mine { background: linear-gradient(135deg, #6a1b9a, #4a148c); border-radius: 18px 18px 2px 18px; }
         .msg-theirs { background: #1e1e24; border-radius: 18px 18px 18px 2px; }
         
+        /* Status Indicators */
         .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
         .status-Online { background: #00c853; box-shadow: 0 0 8px #00c853; }
         .status-Away { background: #ffd600; }
         .status-DND { background: #d50000; }
 
+        .media-content { max-width: 100%; max-height: 300px; border-radius: 12px; margin-top: 8px; border: 1px solid rgba(255,255,255,0.1); }
         .announcement-banner { background: linear-gradient(90deg, #d500f933, transparent); border-left: 4px solid #d500f9; }
+        .burn-timer { animation: pulse 1s infinite; color: #ff5252; }
+        @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.5; } }
     </style>
 </head>
 <body class="theme-Midnight">
@@ -49,17 +53,26 @@
             const [profile, setProfile] = useState(null);
             const [view, setView] = useState('chat');
             const [currentChat, setCurrentChat] = useState('public');
+            const [currentChatName, setCurrentChatName] = useState('Public Chamber');
             const [messages, setMessages] = useState([]);
             const [friends, setFriends] = useState([]);
+            const [requests, setRequests] = useState([]);
+            const [vaultFiles, setVaultFiles] = useState([]);
             const [isBurnMode, setIsBurnMode] = useState(false);
-            const [typingUser, setTypingUser] = useState(null);
             const [showMedia, setShowMedia] = useState(false);
             const [text, setText] = useState('');
-            
+            const [searchName, setSearchName] = useState('');
+            const [isUploading, setIsUploading] = useState(false);
+            const [isRecording, setIsRecording] = useState(false);
+            const mediaRecorder = useRef(null);
+            const audioChunks = useRef([]);
+            const chatEndRef = useRef(null);
+
             // 1. AUTH & INITIAL LOAD
             useEffect(() => {
                 supabaseClient.auth.getSession().then(({ data: { session } }) => setSession(session));
-                // Screenshot Detection Alert
+                supabaseClient.auth.onAuthStateChange((_event, session) => setSession(session));
+                // Screenshot Detection
                 window.addEventListener('keyup', (e) => { if(e.key === 'PrintScreen') alert("SECURITY ALERT: Screenshot detected in private chamber!"); });
             }, []);
 
@@ -69,6 +82,10 @@
                     syncRealtime();
                 }
             }, [session, currentChat]);
+
+            useEffect(() => { fetchMessages(); }, [currentChat, session]);
+            useEffect(() => { if(view === 'vault') fetchVault(); }, [view, session]);
+            useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
             const fetchProfile = async () => {
                 const { data } = await supabaseClient.from('profiles').select('*').eq('id', session.user.id).single();
@@ -83,9 +100,12 @@
                         fetchFriends();
                         fetchProfile();
                     })
+                    .on('postgres_changes', { event: '*', schema: 'public', table: 'friends' }, refreshSocial)
                     .subscribe();
+                return () => supabaseClient.removeChannel(channel);
             };
 
+            // 2. CHAT & MESSAGES
             const fetchMessages = async () => {
                 let query = supabaseClient.from('messages').select('*, profiles!messages_sender_id_fkey(*)').order('created_at', { ascending: true });
                 if (currentChat === 'public') query = query.is('receiver_id', null);
@@ -94,148 +114,366 @@
                 const { data } = await query;
                 setMessages(data || []);
                 
-                // Mark as Read
+                // Mark as Read (Private Chats)
                 if (currentChat !== 'public') {
                     await supabaseClient.from('messages').update({ is_read: true }).eq('receiver_id', session.user.id).eq('sender_id', currentChat);
                 }
             };
 
-            const fetchFriends = async () => {
-                const { data } = await supabaseClient.from('friends').select('*, friend:profiles!friends_friend_id_fkey(*), sender:profiles!friends_user_id_fkey(*)').eq('status', 1).or(`user_id.eq.${session.user.id},friend_id.eq.${session.user.id}`);
-                setFriends(data?.map(f => f.user_id === session.user.id ? f.friend : f.sender) || []);
+            const uploadFile = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                setIsUploading(true);
+                const fileExt = file.name.split('.').pop();
+                const fileName = `${Math.random()}.${fileExt}`;
+                const filePath = `chat_media/${fileName}`;
+
+                const { error: uploadError } = await supabaseClient.storage.from('uploads').upload(filePath, file);
+                if (uploadError) { setIsUploading(false); return alert("Upload failed"); }
+
+                const { data: { publicUrl } } = supabaseClient.storage.from('uploads').getPublicUrl(filePath);
+
+                let type = 'file';
+                if (file.type.startsWith('image/')) type = 'image';
+                else if (file.type.startsWith('video/')) type = 'video';
+                else if (file.type.startsWith('audio/')) type = 'audio';
+
+                await supabaseClient.from('messages').insert([{ 
+                    sender_id: session.user.id, receiver_id: currentChat === 'public' ? null : currentChat, 
+                    content: `Sent a ${type}`, file_url: publicUrl, file_type: type,
+                    expires_at: (currentChat !== 'public' && isBurnMode) ? new Date(Date.now() + 30000).toISOString() : null
+                }]);
+                setIsUploading(false);
             };
 
-            const sendMsg = async (fileData = null) => {
-                const msgObj = {
-                    sender_id: session.user.id,
-                    receiver_id: currentChat === 'public' ? null : currentChat,
-                    content: text,
-                    expires_at: isBurnMode ? new Date(Date.now() + 30000).toISOString() : null, // 30s burn
-                    is_announcement: (currentChat === 'public' && profile.role === 'Dominator' && text.length > 50)
-                };
-                if (fileData) Object.assign(msgObj, fileData);
-                await supabaseClient.from('messages').insert([msgObj]);
+            const sendMsg = async () => {
+                if (!text.trim()) return;
+                const isAnnouncement = (currentChat === 'public' && profile.role === 'Dominator' && text.length > 50);
+                await supabaseClient.from('messages').insert([{ 
+                    sender_id: session.user.id, receiver_id: currentChat === 'public' ? null : currentChat, 
+                    content: text, is_announcement: isAnnouncement,
+                    expires_at: (currentChat !== 'public' && isBurnMode) ? new Date(Date.now() + 30000).toISOString() : null
+                }]);
                 setText('');
+            };
+
+            // Voice Notes (Recording)
+            const startRecording = async () => {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                mediaRecorder.current = new MediaRecorder(stream);
+                audioChunks.current = [];
+                mediaRecorder.current.ondataavailable = e => audioChunks.current.push(e.data);
+                mediaRecorder.current.onstop = uploadVoiceNote;
+                mediaRecorder.current.start();
+                setIsRecording(true);
+            };
+
+            const stopRecording = () => { mediaRecorder.current.stop(); setIsRecording(false); };
+
+            const uploadVoiceNote = async () => {
+                const audioBlob = new Blob(audioChunks.current, { type: 'audio/mpeg' });
+                const filePath = `chat_media/voice_${Date.now()}.mp3`;
+                await supabaseClient.storage.from('uploads').upload(filePath, audioBlob);
+                const { data: { publicUrl } } = supabaseClient.storage.from('uploads').getPublicUrl(filePath);
+                await supabaseClient.from('messages').insert([{ sender_id: session.user.id, receiver_id: currentChat === 'public' ? null : currentChat, content: 'Sent a voice note', file_url: publicUrl, file_type: 'audio' }]);
+            };
+
+            // 3. SOCIAL (Restored and Improved)
+            const refreshSocial = async () => {
+                const { data: fList } = await supabaseClient.from('friends').select('*, friend:profiles!friends_friend_id_fkey(*), sender:profiles!friends_user_id_fkey(*)').eq('status', 1).or(`user_id.eq.${session.user.id},friend_id.eq.${session.user.id}`);
+                const { data: rList } = await supabaseClient.from('friends').select('*, sender:profiles!friends_user_id_fkey(*)').eq('friend_id', session.user.id).eq('status', 0);
+                setFriends(fList?.map(f => f.user_id === session.user.id ? f.friend : f.sender) || []);
+                setRequests(rList || []);
+            };
+
+            const sendFriendRequest = async () => {
+                const { data: target } = await supabaseClient.from('profiles').select('id').eq('username', searchName).single();
+                if (!target) return alert("User not found");
+                await supabaseClient.from('friends').insert([{ user_id: session.user.id, friend_id: target.id, status: 0 }]);
+                alert("Request Sent!"); setSearchName('');
+            };
+
+            const acceptFriend = async (id) => { await supabaseClient.from('friends').update({ status: 1 }).eq('id', id); refreshSocial(); };
+
+            // 4. SETTINGS & PROFILE EDITING (Massive fix, now allows picture/name change)
+            const updateProfileData = async () => {
+                await supabaseClient.from('profiles').update({ username: profile.username }).eq('id', session.user.id);
+                alert("Profile Updated!"); fetchProfile();
+            };
+
+            const changeProfilePic = async (e) => {
+                const file = e.target.files[0];
+                if(!file) return;
+                const path = `avatars/${session.user.id}-${Date.now()}.png`;
+                await supabaseClient.storage.from('uploads').upload(path, file);
+                const { data: { publicUrl } } = supabaseClient.storage.from('uploads').getPublicUrl(path);
+                await supabaseClient.from('profiles').update({ avatar_url: publicUrl }).eq('id', session.user.id);
+                fetchProfile();
+            };
+
+            const updateStatusOrTheme = async (column, value) => {
+                await supabaseClient.from('profiles').update({ [column]: value }).eq('id', session.user.id);
+                fetchProfile();
+            };
+
+            // 5. VAULT (Implementation for user's question)
+            const fetchVault = async () => {
+                const { data } = await supabaseClient.from('vault').select('*').order('created_at', { ascending: false });
+                setVaultFiles(data || []);
+            };
+
+            const uploadToVault = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                setIsUploading(true);
+                const path = `vault/${session.user.id}/${Date.now()}_${file.name}`;
+                await supabaseClient.storage.from('uploads').upload(path, file);
+                const { data: { publicUrl } } = supabaseClient.storage.from('uploads').getPublicUrl(path);
+                await supabaseClient.from('vault').insert([{ user_id: session.user.id, file_url: publicUrl, file_name: file.name }]);
+                setIsUploading(false); fetchVault();
+            };
+
+            const deleteFromVault = async (id, fileUrl) => {
+                const path = fileUrl.split('/uploads/')[1];
+                await supabaseClient.storage.from('uploads').remove([path]);
+                await supabaseClient.from('vault').delete().eq('id', id);
+                fetchVault();
             };
 
             if (!session) return <AuthUI />;
 
             return (
                 <div className="flex h-screen overflow-hidden">
-                    {/* Sidebar */}
+                    {/* SIDEBAR NAVIGATION */}
                     <div className="w-20 lg:w-72 glass flex flex-col py-6">
                         <div className="px-6 mb-8 hidden lg:block font-black text-2xl text-purple-500 italic">K-D WORLD</div>
                         <nav className="flex-1 space-y-2">
                             <button onClick={() => setView('chat')} className={`w-full flex items-center gap-4 p-4 ${view === 'chat' ? 'active-tab' : ''}`}><span>💬</span><span className="hidden lg:block font-bold">Chambers</span></button>
+                            <button onClick={() => {setView('social'); refreshSocial();}} className={`w-full flex items-center gap-4 p-4 ${view === 'social' ? 'active-tab' : ''}`}><span>👥</span><span className="hidden lg:block font-bold">Social</span></button>
                             <button onClick={() => setView('vault')} className={`w-full flex items-center gap-4 p-4 ${view === 'vault' ? 'active-tab' : ''}`}><span>🔐</span><span className="hidden lg:block font-bold">Vault</span></button>
                             <button onClick={() => setView('settings')} className={`w-full flex items-center gap-4 p-4 ${view === 'settings' ? 'active-tab' : ''}`}><span>⚙️</span><span className="hidden lg:block font-bold">Settings</span></button>
                         </nav>
                         <div className="p-4 border-t border-white/5">
                             <div className="flex items-center gap-3">
-                                <img src={profile?.avatar_url} className={`w-10 h-10 rounded-full glow-${profile?.role}`} />
-                                <div className="hidden lg:block">
-                                    <p className="text-xs font-bold">{profile?.username}</p>
-                                    <div className={`status-dot status-${profile?.status}`}></div> <span className="text-[10px] opacity-50">{profile?.status}</span>
-                                </div>
+                                <img src={profile?.avatar_url || 'https://via.placeholder.com/100'} className={`w-10 h-10 rounded-full glow-${profile?.role}`} />
+                                <div className="hidden lg:block overflow-hidden"><p className="text-xs font-bold truncate">{profile?.username}</p><p className="text-[10px] opacity-40 uppercase tracking-tight">{profile?.role}</p></div>
                             </div>
                         </div>
                     </div>
 
-                    {/* Main Area */}
-                    <div className="flex-1 flex flex-col relative">
+                    {/* MAIN CONTENT AREA */}
+                    <div className="flex-1 flex flex-col relative bg-[#050507]">
+                        
+                        {/* VIEW: CHAMBERS (Chat) */}
                         {view === 'chat' && (
                             <div className="flex flex-1 overflow-hidden">
-                                <div className="w-64 border-r border-white/5 hidden lg:flex flex-col p-4 space-y-4">
-                                    <p className="text-[10px] font-black opacity-30 uppercase tracking-widest">Active Friends</p>
+                                <div className="w-64 border-r border-white/5 hidden lg:flex flex-col bg-black/20 p-4 space-y-4">
+                                    <button onClick={() => {setCurrentChat('public'); setCurrentChatName('Public Chamber');}} className={`p-3 text-left font-bold rounded-lg ${currentChat === 'public' ? 'text-purple-400 bg-purple-500/10' : ''}`}>🌐 Public Room</button>
+                                    <p className="text-[10px] font-black opacity-30 uppercase tracking-widest pl-3">Active Friends</p>
                                     {friends.map(f => (
-                                        <div key={f.id} onClick={() => setCurrentChat(f.id)} className="flex items-center gap-3 cursor-pointer p-2 hover:bg-white/5 rounded-xl transition">
-                                            <div className="relative">
-                                                <img src={f.avatar_url} className="w-8 h-8 rounded-full" />
-                                                <div className={`absolute bottom-0 right-0 w-2.5 h-2.5 rounded-full border-2 border-black status-${f.status}`}></div>
-                                            </div>
+                                        <button key={f.id} onClick={() => {setCurrentChat(f.id); setCurrentChatName(f.username);}} className={`flex items-center gap-3 p-3 rounded-lg hover:bg-white/5 transition ${currentChat === f.id ? 'text-purple-400 bg-purple-500/10' : ''}`}>
+                                            <div className="relative"><img src={f.avatar_url || 'https://via.placeholder.com/100'} className="w-8 h-8 rounded-full object-cover" /><div className={`absolute bottom-0 right-0 w-3 h-3 rounded-full border-2 border-black status-${f.status}`}></div></div>
                                             <span className="text-sm font-medium">{f.username}</span>
-                                        </div>
+                                        </button>
                                     ))}
                                 </div>
                                 
                                 <div className="flex-1 flex flex-col">
-                                    <header className="p-6 border-b border-white/5 flex justify-between items-center">
-                                        <h2 className="font-black text-xl"># {currentChat === 'public' ? 'Public Chamber' : 'Private Session'}</h2>
+                                    <header className="p-6 border-b border-white/5 flex justify-between items-center bg-black/40">
+                                        <h2 className="font-black text-xl flex items-center gap-3"><span className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></span> {currentChatName}</h2>
                                         <div className="flex gap-4 items-center">
-                                            <button onClick={() => setShowMedia(!showMedia)} className="text-xs font-bold opacity-50">🖼️ Gallery</button>
-                                            <button onClick={() => setIsBurnMode(!isBurnMode)} className={`text-xs font-bold px-3 py-1 rounded-full ${isBurnMode ? 'bg-red-600' : 'bg-white/10'}`}>🔥 Burn: {isBurnMode ? 'ON' : 'OFF'}</button>
+                                            {currentChat !== 'public' && ( <>
+                                                <button onClick={() => setShowMedia(!showMedia)} className="text-xs font-bold opacity-50 hover:opacity-100 transition">🖼️ Gallery</button>
+                                                <button onClick={() => setIsBurnMode(!isBurnMode)} className={`text-xs font-bold px-3 py-1 rounded-full ${isBurnMode ? 'bg-red-600' : 'bg-white/10'}`} title="Self-destruct Mode">🔥 Burn: {isBurnMode ? 'ON' : 'OFF'}</button>
+                                            </>)}
                                         </div>
                                     </header>
 
-                                    <div className="flex-1 p-6 overflow-y-auto space-y-6">
+                                    <div className="flex-1 p-6 overflow-y-auto flex flex-col gap-6">
                                         {messages.map((msg, i) => {
                                             const isMine = msg.sender_id === session.user.id;
                                             const isExpired = msg.expires_at && new Date(msg.expires_at) < new Date();
-                                            if (isExpired) return null;
+                                            if (currentChat !== 'public' && msg.expires_at && isExpired) return null; // Hide if burned
 
                                             return (
                                                 <div key={i} className={`flex gap-3 ${isMine ? 'flex-row-reverse' : 'flex-row'} ${msg.is_announcement ? 'announcement-banner p-4 rounded-xl' : ''}`}>
-                                                    <img src={msg.profiles?.avatar_url} className={`w-10 h-10 rounded-full glow-${msg.profiles?.role}`} />
-                                                    <div className={`max-w-[70%] p-4 ${isMine ? 'msg-mine' : 'msg-theirs'}`}>
-                                                        {msg.file_url ? (
-                                                            msg.file_type === 'image' ? <img src={msg.file_url} className="rounded-lg max-w-xs" /> : 
-                                                            msg.file_type === 'video' ? <video src={msg.file_url} controls className="rounded-lg max-w-xs" /> : 
-                                                            <audio src={msg.file_url} controls className="w-48" />
-                                                        ) : <p className="text-sm">{msg.content}</p>}
-                                                        <div className="flex justify-between items-center mt-2 opacity-30 text-[9px]">
-                                                            <span>{msg.profiles?.username}</span>
-                                                            {isMine && <span>{msg.is_read ? '✔️✔️' : '✔️'}</span>}
+                                                    <img src={msg.profiles?.avatar_url || 'https://via.placeholder.com/100'} className={`w-10 h-10 rounded-full glow-${msg.profiles?.role} object-cover`} />
+                                                    <div className={`flex flex-col ${isMine ? 'items-end' : 'items-start'} max-w-[75%]`}>
+                                                        <span className="text-[10px] font-bold opacity-30 mb-1 uppercase tracking-tight">{msg.profiles?.username}</span>
+                                                        <div className={`p-4 shadow-2xl text-sm ${isMine ? 'msg-mine' : 'msg-theirs'}`}>
+                                                            {msg.file_url ? (
+                                                                <>
+                                                                    {msg.file_type === 'image' && <img src={msg.file_url} className="media-content rounded-lg" />}
+                                                                    {msg.file_type === 'video' && <video src={msg.file_url} controls className="media-content rounded-lg" />}
+                                                                    {msg.file_type === 'audio' && <audio src={msg.file_url} controls className="w-64 mt-2" />}
+                                                                    {msg.file_type === 'file' && <a href={msg.file_url} target="_blank" className="flex items-center gap-2 bg-black/40 p-3 rounded-xl mt-2 underline italic text-xs">📄 Download File</a>}
+                                                                </>
+                                                            ) : <p>{msg.content}</p>}
+                                                            
+                                                            <div className="flex justify-between items-center mt-2 opacity-30 text-[9px] gap-4 min-w-16">
+                                                                {isMine && currentChat !== 'public' && <span>{msg.is_read ? '✔️✔️' : '✔️'}</span>}
+                                                                {msg.expires_at && !isExpired && currentChat !== 'public' && <span className="burn-timer italic">Burning...</span>}
+                                                            </div>
                                                         </div>
                                                     </div>
                                                 </div>
                                             );
                                         })}
+                                        <div ref={chatEndRef} />
                                     </div>
 
-                                    {/* Input */}
-                                    <div className="p-6">
+                                    <div className="p-6 bg-black/40">
                                         <div className="max-w-4xl mx-auto flex gap-3 bg-white/5 p-2 rounded-2xl border border-white/10 items-center">
-                                            <button className="p-2 hover:bg-white/10 rounded-xl">🎤</button>
-                                            <input className="flex-1 bg-transparent px-4 py-2 outline-none" placeholder="Message..." value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendMsg()} />
-                                            <button onClick={() => sendMsg()} className="bg-purple-600 px-6 py-2 rounded-xl font-black text-xs">SEND</button>
+                                            <label className="p-3 cursor-pointer hover:bg-white/10 rounded-xl transition text-xl">
+                                                {isUploading ? <span className="animate-spin inline-block">⏳</span> : '📎'}
+                                                <input type="file" className="hidden" onChange={uploadFile} disabled={isUploading} />
+                                            </label>
+                                            
+                                            {isRecording ? (
+                                                <div className="flex-1 flex items-center justify-between bg-red-900/50 p-3 rounded-lg border border-red-500 text-xs font-black animate-pulse">
+                                                    RECORDING VOICE NOTE... <button onClick={stopRecording} className="text-xl">⏹️ STOP</button>
+                                                </div>
+                                            ) : (
+                                                <>
+                                                    <button onClick={startRecording} className="p-3 hover:bg-white/10 rounded-xl text-xl">🎤</button>
+                                                    <input className="flex-1 bg-transparent px-4 py-2 outline-none text-white" placeholder="Type inside chamber..." value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendMsg()} />
+                                                    <button onClick={sendMsg} className="bg-purple-600 px-6 py-3 rounded-xl font-black text-xs hover:bg-purple-500 transition active:scale-95">SEND</button>
+                                                </>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
                             </div>
                         )}
 
+                        {/* VIEW: SOCIAL (Restored fully) */}
+                        {view === 'social' && (
+                            <div className="flex-1 p-10 max-w-4xl mx-auto w-full space-y-10 overflow-y-auto">
+                                <section>
+                                    <h2 className="text-2xl font-black mb-6 flex items-center gap-3"><span>➕</span> Add New Member</h2>
+                                    <div className="flex gap-3 bg-white/5 p-3 rounded-2xl border border-white/10">
+                                        <input className="flex-1 bg-transparent px-4 py-2 outline-none" placeholder="Enter username..." value={searchName} onChange={e => setSearchName(e.target.value)} />
+                                        <button onClick={sendFriendRequest} className="bg-purple-600 px-8 py-3 rounded-xl font-bold">SEND REQUEST</button>
+                                    </div>
+                                </section>
+
+                                {requests.length > 0 && (
+                                    <section>
+                                        <h2 className="text-2xl font-black mb-6 text-yellow-500">Incoming Requests ({requests.length})</h2>
+                                        {requests.map(r => (
+                                            <div key={r.id} className="bg-white/5 p-6 rounded-2xl flex items-center justify-between border border-white/10 mb-4">
+                                                <div className="flex items-center gap-4"><img src={r.sender.avatar_url || 'https://via.placeholder.com/100'} className="w-12 h-12 rounded-full object-cover" /><span className="font-bold text-lg">{r.sender.username}</span></div>
+                                                <button onClick={() => acceptFriend(r.id)} className="bg-green-600 px-6 py-2 rounded-xl font-bold">ACCEPT</button>
+                                            </div>
+                                        ))}
+                                    </section>
+                                )}
+
+                                <section>
+                                    <h2 className="text-2xl font-black mb-6 tracking-tight">Active Friends ({friends.length})</h2>
+                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                                        {friends.map(f => (
+                                            <div key={f.id} className="bg-white/5 p-4 rounded-2xl flex items-center gap-4 border border-white/5">
+                                                <div className="relative"><img src={f.avatar_url || 'https://via.placeholder.com/100'} className="w-14 h-14 rounded-full object-cover border-2 border-purple-500/30" /><div className={`absolute bottom-0 right-0 w-4 h-4 rounded-full border-2 border-black status-${f.status}`}></div></div>
+                                                <div className="flex-1"><p className="font-black text-lg">{f.username}</p><p className="text-[10px] opacity-40 uppercase">{f.role}</p></div>
+                                                <button onClick={() => {setCurrentChat(f.id); setCurrentChatName(f.username); setView('chat');}} className="bg-purple-600 p-4 rounded-xl hover:bg-purple-500 transition">💬</button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                </section>
+                            </div>
+                        )}
+
+                        {/* VIEW: VAULT (Final full implementation) */}
+                        {view === 'vault' && (
+                            <div className="flex-1 p-10 max-w-4xl mx-auto w-full space-y-10 overflow-y-auto">
+                                <header className="bg-purple-900/30 p-8 rounded-[2rem] border border-purple-600 text-center">
+                                    <h1 className="text-3xl font-black mb-2 flex items-center justify-center gap-3"><span>🔐</span> My Encrypted Vault</h1>
+                                    <p className="opacity-70 text-sm max-w-md mx-auto">This is your strictly private storage chamber. No one, not even Dominators, can access the files stored here. Perfect for sensitive documents or private multimedia.</p>
+                                </header>
+                                
+                                <section className="flex items-center justify-between bg-white/5 p-6 rounded-2xl border border-white/10">
+                                    <p className="font-bold">Total Private Files: {vaultFiles.length}</p>
+                                    <label className="bg-purple-600 px-6 py-3 rounded-xl font-black text-xs cursor-pointer hover:bg-purple-500 transition disabled:opacity-50">
+                                        {isUploading ? <span className="animate-spin inline-block">⏳</span> : '➕ UPLOAD TO VAULT'}
+                                        <input type="file" className="hidden" onChange={uploadToVault} disabled={isUploading} />
+                                    </label>
+                                </section>
+
+                                <section className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                                    {vaultFiles.map(file => (
+                                        <div key={file.id} className="bg-black/40 border border-white/10 p-4 rounded-xl flex flex-col gap-3 group relative">
+                                            <div className="font-medium text-sm truncate pr-8">{file.file_name || 'vault_file'}</div>
+                                            <a href={file.file_url} target="_blank" className="bg-white/10 text-center py-2 rounded-lg text-xs font-bold uppercase hover:bg-white/20 transition">📄 View/Download</a>
+                                            <div className="text-[9px] opacity-30">{new Date(file.created_at).toLocaleDateString()}</div>
+                                            <button onClick={() => deleteFromVault(file.id, file.file_url)} className="absolute top-3 right-3 text-red-500 opacity-0 group-hover:opacity-100 transition">✕</button>
+                                        </div>
+                                    ))}
+                                </section>
+                            </div>
+                        )}
+
+                        {/* VIEW: ELITE SETTINGS & PROFILE EDITING (Restore profile change logic) */}
                         {view === 'settings' && (
-                            <div className="flex-1 p-10 max-w-2xl mx-auto w-full space-y-10">
-                                <h2 className="text-3xl font-black">Elite Settings</h2>
-                                <div className="space-y-4">
+                            <div className="flex-1 p-10 max-w-3xl mx-auto w-full space-y-10 overflow-y-auto">
+                                <h2 className="text-3xl font-black tracking-tight">Elite Settings</h2>
+                                
+                                {/* Picture/Name Change Section */}
+                                <div className="bg-white/5 p-8 rounded-3xl border border-white/10 space-y-6 text-center">
+                                    <h3 className="text-xl font-black mb-6">Profile Identity</h3>
+                                    <div className="relative w-32 h-32 mx-auto mb-10 group">
+                                        <img src={profile?.avatar_url || 'https://via.placeholder.com/150'} className={`w-full h-full rounded-full object-cover shadow-2xl transition group-hover:opacity-40 glow-${profile?.role}`} />
+                                        <label className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 cursor-pointer transition text-2xl">
+                                            📷 <input type="file" className="hidden" onChange={changeProfilePic} />
+                                        </label>
+                                    </div>
+                                    <div className="text-left space-y-4">
+                                        <div>
+                                            <label className="text-[10px] font-black opacity-30 uppercase ml-2">Chamber Handle (Username)</label>
+                                            <input className="w-full bg-black/40 border border-white/10 p-4 rounded-2xl mt-1 outline-none focus:border-purple-500 transition text-white" 
+                                                value={profile?.username || ''} onChange={(e) => setProfile({...profile, username: e.target.value})} />
+                                        </div>
+                                        <button onClick={updateProfileData} className="w-full bg-purple-600 py-4 rounded-2xl font-black uppercase tracking-widest hover:bg-purple-500 transition">Update Identity</button>
+                                    </div>
+                                </div>
+
+                                {/* Customization and Sign out */}
+                                <div className="space-y-6">
+                                    <label className="text-xs font-bold opacity-40 uppercase">Account Role</label>
+                                    <div className="p-4 bg-black/40 rounded-2xl border border-white/10 font-bold tracking-widest uppercase text-xs">Role: <span className={`text-purple-400 glow-${profile?.role} p-1 rounded-md`}>{profile?.role}</span></div>
+                                    
                                     <label className="text-xs font-bold opacity-40 uppercase">Status Indicator</label>
-                                    <div className="flex gap-2">
+                                    <div className="grid grid-cols-3 gap-2">
                                         {['Online', 'Away', 'DND'].map(s => (
-                                            <button key={s} onClick={() => supabaseClient.from('profiles').update({ status: s }).eq('id', session.user.id)} className={`px-4 py-2 rounded-xl border border-white/10 ${profile.status === s ? 'bg-purple-600' : ''}`}>{s}</button>
+                                            <button key={s} onClick={() => updateStatusOrTheme('status', s)} className={`p-4 flex items-center gap-2 justify-center rounded-2xl border border-white/10 font-bold ${profile.status === s ? 'bg-purple-600' : ''}`}><div className={`status-dot status-${s}`}></div>{s}</button>
                                         ))}
                                     </div>
                                     
                                     <label className="text-xs font-bold opacity-40 uppercase">Interface Theme</label>
-                                    <div className="flex gap-2">
+                                    <div className="grid grid-cols-4 gap-2">
                                         {['Midnight', 'Purple', 'Blue', 'Black'].map(t => (
-                                            <button key={t} onClick={() => supabaseClient.from('profiles').update({ theme: t }).eq('id', session.user.id)} className={`px-4 py-2 rounded-xl border border-white/10 ${profile.theme === t ? 'bg-purple-600' : ''}`}>{t}</button>
+                                            <button key={t} onClick={() => updateStatusOrTheme('theme', t)} className={`p-4 rounded-2xl border border-white/10 font-bold ${profile.theme === t ? 'bg-purple-600 border-purple-600' : ''}`}>{t}</button>
                                         ))}
                                     </div>
+                                    <button onClick={() => supabaseClient.auth.signOut()} className="w-full text-red-500 font-bold uppercase text-xs pt-10">☠️ Deactivate Current Session (Sign Out)</button>
                                 </div>
                             </div>
                         )}
                         
-                        {/* Media Gallery Overlay */}
-                        {showMedia && (
+                        {/* GALLERY OVERLAY (Restored fully) */}
+                        {showMedia && currentChat !== 'public' && (
                             <div className="absolute right-0 top-0 w-80 h-full glass p-6 z-50 overflow-y-auto">
                                 <div className="flex justify-between items-center mb-6">
-                                    <h3 className="font-black tracking-tighter uppercase">Chamber Media</h3>
-                                    <button onClick={() => setShowMedia(false)}>✕</button>
+                                    <h3 className="font-black tracking-tighter uppercase text-lg">Chamber Multimedia</h3>
+                                    <button onClick={() => setShowMedia(false)} className="text-lg">✕</button>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
-                                    {messages.filter(m => m.file_url).map((m, i) => (
-                                        <img key={i} src={m.file_url} className="w-full aspect-square object-cover rounded-lg" />
-                                    ))}
+                                    {messages.filter(m => m.file_url).map((m, i) => {
+                                        if (m.file_type === 'image') return <img key={i} src={m.file_url} className="w-full aspect-square object-cover rounded-lg" />;
+                                        if (m.file_type === 'video') return <div key={i} className="w-full aspect-square bg-white/10 rounded-lg flex items-center justify-center">▶️ Video</div>;
+                                        if (m.file_type === 'audio') return <div key={i} className="w-full aspect-square bg-white/10 rounded-lg flex items-center justify-center">🎤 Audio</div>;
+                                        return <div key={i} className="w-full aspect-square bg-white/10 rounded-lg flex items-center justify-center">📄 File</div>;
+                                    })}
                                 </div>
                             </div>
                         )}
@@ -248,59 +486,37 @@
             const [mode, setMode] = useState('login');
             const [form, setForm] = useState({ email: '', password: '', username: '', role: 'Switch' });
             const [loading, setLoading] = useState(false);
+            const [error, setError] = useState('');
 
-const handleAction = async () => {
-    setLoading(true);
-    try {
-        if (mode === 'signup') {
-            const { data, error: authError } = await supabaseClient.auth.signUp({ 
-                email: form.email, 
-                password: form.password 
-            });
-            
-            if (authError) throw authError;
+            const handleAction = async () => {
+                setLoading(true); setError('');
+                try {
+                    if (mode === 'signup') {
+                        const { data, error: authError } = await supabaseClient.auth.signUp({ email: form.email, password: form.password });
+                        if (authError) throw authError;
+                        if (data.user) {
+                            await supabaseClient.from('profiles').insert([{ id: data.user.id, username: form.username, role: form.role, status: 'Online', theme: 'Midnight' }]);
+                            await supabaseClient.auth.signInWithPassword({ email: form.email, password: form.password });
+                            window.location.reload(); 
+                        }
+                    } else {
+                        const { error: loginError } = await supabaseClient.auth.signInWithPassword({ email: form.email, password: form.password });
+                        if (loginError) throw loginError;
+                        window.location.reload(); 
+                    }
+                } catch (err) { setError(err.message); } finally { setLoading(false); }
+            };
 
-            if (data.user) {
-                // This creates the profile in your table
-                const { error: profileError } = await supabaseClient.from('profiles').insert([{ 
-                    id: data.user.id, 
-                    username: form.username, 
-                    role: form.role,
-                    status: 'Online',
-                    theme: 'Midnight'
-                }]);
-                if (profileError) throw profileError;
-                
-                // CRITICAL: Log them in immediately after signup
-                await supabaseClient.auth.signInWithPassword({ 
-                    email: form.email, 
-                    password: form.password 
-                });
-                window.location.reload(); 
-            }
-        } else {
-            const { error: loginError } = await supabaseClient.auth.signInWithPassword({ 
-                email: form.email, 
-                password: form.password 
-            });
-            if (loginError) throw loginError;
-            window.location.reload(); 
-        }
-    } catch (err) {
-        alert(err.message);
-    } finally {
-        setLoading(false);
-    }
-};
             return (
-                <div className="h-screen flex items-center justify-center bg-black">
-                    <div className="glass p-10 rounded-[3rem] w-full max-w-sm border border-white/10 text-center">
+                <div className="h-screen flex items-center justify-center bg-black p-6">
+                    <div className="glass p-10 rounded-[3rem] w-full max-w-sm border border-white/10 text-center shadow-2xl">
                         <h1 className="text-4xl font-black text-purple-500 italic mb-10 tracking-tighter">K-D WORLD</h1>
+                        {error && <div className="bg-red-900 border border-red-500 text-xs text-red-200 p-4 rounded-xl mb-6">{error}</div>}
                         <div className="space-y-4">
                             {mode === 'signup' && (
                                 <>
-                                    <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none text-white" placeholder="Username" onChange={e => setForm({...form, username: e.target.value})} />
-                                    <select className="w-full bg-black border border-white/10 p-4 rounded-2xl text-xs font-bold text-white" onChange={e => setForm({...form, role: e.target.value})}>
+                                    <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none text-white text-xs" placeholder="Username" onChange={e => setForm({...form, username: e.target.value})} />
+                                    <select className="w-full bg-black border border-white/10 p-4 rounded-2xl text-xs font-bold text-white uppercase tracking-widest" onChange={e => setForm({...form, role: e.target.value})}>
                                         <option value="Switch">Role: Switch</option>
                                         <option value="Dominator">Role: Dominator</option>
                                         <option value="Submissive">Role: Submissive</option>
@@ -309,18 +525,10 @@ const handleAction = async () => {
                             )}
                             <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none text-white text-xs" placeholder="Email" onChange={e => setForm({...form, email: e.target.value})} />
                             <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none text-white text-xs" type="password" placeholder="Password" onChange={e => setForm({...form, password: e.target.value})} />
-                            
-                            <button 
-                                onClick={handleAction} 
-                                disabled={loading}
-                                className="w-full bg-purple-600 p-5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-purple-500 transition disabled:opacity-50"
-                            >
+                            <button onClick={handleAction} disabled={loading} className="w-full bg-purple-600 p-5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-purple-500 transition disabled:opacity-50">
                                 {loading ? 'Processing...' : mode}
                             </button>
-                            
-                            <p onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="text-center text-[10px] opacity-40 cursor-pointer mt-4 uppercase font-bold">
-                                Switch to {mode === 'login' ? 'Signup' : 'Login'}
-                            </p>
+                            <p onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="text-center text-[10px] cursor-pointer mt-4 uppercase font-bold text-purple-400">Switch to {mode === 'login' ? 'Signup' : 'Login'}</p>
                         </div>
                     </div>
                 </div>
