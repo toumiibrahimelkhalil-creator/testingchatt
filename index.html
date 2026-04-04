@@ -18,7 +18,6 @@
         body { background: var(--bg); color: #e2e2e2; font-family: 'Inter', sans-serif; transition: all 0.4s ease; height: 100vh; overflow: hidden; }
         .glass { background: var(--panel); backdrop-filter: blur(20px); border-right: 1px solid rgba(255,255,255,0.05); }
         
-        /* Role Glow Effects */
         .glow-Dominator { box-shadow: 0 0 15px #ff1744; border: 2px solid #ff1744; }
         .glow-Submissive { box-shadow: 0 0 15px #00e5ff; border: 2px solid #00e5ff; }
         .glow-Switch { box-shadow: 0 0 15px #d500f9; border: 2px solid #d500f9; }
@@ -27,7 +26,6 @@
         .msg-mine { background: linear-gradient(135deg, #6a1b9a, #4a148c); border-radius: 18px 18px 2px 18px; }
         .msg-theirs { background: #1e1e24; border-radius: 18px 18px 18px 2px; }
         
-        /* Status Indicators */
         .status-dot { width: 10px; height: 10px; border-radius: 50%; display: inline-block; }
         .status-Online { background: #00c853; box-shadow: 0 0 8px #00c853; }
         .status-Away { background: #ffd600; }
@@ -68,17 +66,16 @@
             const audioChunks = useRef([]);
             const chatEndRef = useRef(null);
 
-            // 1. AUTH & INITIAL LOAD
             useEffect(() => {
                 supabaseClient.auth.getSession().then(({ data: { session } }) => setSession(session));
                 supabaseClient.auth.onAuthStateChange((_event, session) => setSession(session));
-                // Screenshot Detection
                 window.addEventListener('keyup', (e) => { if(e.key === 'PrintScreen') alert("SECURITY ALERT: Screenshot detected in private chamber!"); });
             }, []);
 
             useEffect(() => {
                 if (session) {
                     fetchProfile();
+                    refreshSocial(); // Fix: Load friends instantly
                     syncRealtime();
                 }
             }, [session, currentChat]);
@@ -87,17 +84,25 @@
             useEffect(() => { if(view === 'vault') fetchVault(); }, [view, session]);
             useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
+            // FIX: Bulletproof Profile Fetching (Stops the Black Screen Crash)
             const fetchProfile = async () => {
                 const { data } = await supabaseClient.from('profiles').select('*').eq('id', session.user.id).single();
-                setProfile(data);
-                document.body.className = `theme-${data.theme || 'Midnight'}`;
+                if (data) {
+                    setProfile(data);
+                    document.body.className = `theme-${data.theme || 'Midnight'}`;
+                } else {
+                    // Auto-fix: If they logged in but profile creation failed previously, create one now.
+                    const fallbackName = "User_" + Math.floor(Math.random() * 10000);
+                    await supabaseClient.from('profiles').insert([{ id: session.user.id, username: fallbackName, role: 'Switch' }]);
+                    setProfile({ username: fallbackName, role: 'Switch', status: 'Online', theme: 'Midnight' });
+                }
             };
 
             const syncRealtime = () => {
                 const channel = supabaseClient.channel('global')
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, fetchMessages)
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => {
-                        fetchFriends();
+                        refreshSocial(); // Fix: Was crashing here before
                         fetchProfile();
                     })
                     .on('postgres_changes', { event: '*', schema: 'public', table: 'friends' }, refreshSocial)
@@ -105,7 +110,6 @@
                 return () => supabaseClient.removeChannel(channel);
             };
 
-            // 2. CHAT & MESSAGES
             const fetchMessages = async () => {
                 let query = supabaseClient.from('messages').select('*, profiles!messages_sender_id_fkey(*)').order('created_at', { ascending: true });
                 if (currentChat === 'public') query = query.is('receiver_id', null);
@@ -114,7 +118,6 @@
                 const { data } = await query;
                 setMessages(data || []);
                 
-                // Mark as Read (Private Chats)
                 if (currentChat !== 'public') {
                     await supabaseClient.from('messages').update({ is_read: true }).eq('receiver_id', session.user.id).eq('sender_id', currentChat);
                 }
@@ -148,7 +151,7 @@
 
             const sendMsg = async () => {
                 if (!text.trim()) return;
-                const isAnnouncement = (currentChat === 'public' && profile.role === 'Dominator' && text.length > 50);
+                const isAnnouncement = (currentChat === 'public' && profile?.role === 'Dominator' && text.length > 50);
                 await supabaseClient.from('messages').insert([{ 
                     sender_id: session.user.id, receiver_id: currentChat === 'public' ? null : currentChat, 
                     content: text, is_announcement: isAnnouncement,
@@ -157,7 +160,6 @@
                 setText('');
             };
 
-            // Voice Notes (Recording)
             const startRecording = async () => {
                 const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
                 mediaRecorder.current = new MediaRecorder(stream);
@@ -178,7 +180,6 @@
                 await supabaseClient.from('messages').insert([{ sender_id: session.user.id, receiver_id: currentChat === 'public' ? null : currentChat, content: 'Sent a voice note', file_url: publicUrl, file_type: 'audio' }]);
             };
 
-            // 3. SOCIAL (Restored and Improved)
             const refreshSocial = async () => {
                 const { data: fList } = await supabaseClient.from('friends').select('*, friend:profiles!friends_friend_id_fkey(*), sender:profiles!friends_user_id_fkey(*)').eq('status', 1).or(`user_id.eq.${session.user.id},friend_id.eq.${session.user.id}`);
                 const { data: rList } = await supabaseClient.from('friends').select('*, sender:profiles!friends_user_id_fkey(*)').eq('friend_id', session.user.id).eq('status', 0);
@@ -195,9 +196,8 @@
 
             const acceptFriend = async (id) => { await supabaseClient.from('friends').update({ status: 1 }).eq('id', id); refreshSocial(); };
 
-            // 4. SETTINGS & PROFILE EDITING (Massive fix, now allows picture/name change)
             const updateProfileData = async () => {
-                await supabaseClient.from('profiles').update({ username: profile.username }).eq('id', session.user.id);
+                await supabaseClient.from('profiles').update({ username: profile?.username }).eq('id', session.user.id);
                 alert("Profile Updated!"); fetchProfile();
             };
 
@@ -216,7 +216,6 @@
                 fetchProfile();
             };
 
-            // 5. VAULT (Implementation for user's question)
             const fetchVault = async () => {
                 const { data } = await supabaseClient.from('vault').select('*').order('created_at', { ascending: false });
                 setVaultFiles(data || []);
@@ -264,7 +263,6 @@
                     {/* MAIN CONTENT AREA */}
                     <div className="flex-1 flex flex-col relative bg-[#050507]">
                         
-                        {/* VIEW: CHAMBERS (Chat) */}
                         {view === 'chat' && (
                             <div className="flex flex-1 overflow-hidden">
                                 <div className="w-64 border-r border-white/5 hidden lg:flex flex-col bg-black/20 p-4 space-y-4">
@@ -346,7 +344,6 @@
                             </div>
                         )}
 
-                        {/* VIEW: SOCIAL (Restored fully) */}
                         {view === 'social' && (
                             <div className="flex-1 p-10 max-w-4xl mx-auto w-full space-y-10 overflow-y-auto">
                                 <section>
@@ -384,7 +381,6 @@
                             </div>
                         )}
 
-                        {/* VIEW: VAULT (Final full implementation) */}
                         {view === 'vault' && (
                             <div className="flex-1 p-10 max-w-4xl mx-auto w-full space-y-10 overflow-y-auto">
                                 <header className="bg-purple-900/30 p-8 rounded-[2rem] border border-purple-600 text-center">
@@ -413,12 +409,10 @@
                             </div>
                         )}
 
-                        {/* VIEW: ELITE SETTINGS & PROFILE EDITING (Restore profile change logic) */}
                         {view === 'settings' && (
                             <div className="flex-1 p-10 max-w-3xl mx-auto w-full space-y-10 overflow-y-auto">
                                 <h2 className="text-3xl font-black tracking-tight">Elite Settings</h2>
                                 
-                                {/* Picture/Name Change Section */}
                                 <div className="bg-white/5 p-8 rounded-3xl border border-white/10 space-y-6 text-center">
                                     <h3 className="text-xl font-black mb-6">Profile Identity</h3>
                                     <div className="relative w-32 h-32 mx-auto mb-10 group">
@@ -437,7 +431,6 @@
                                     </div>
                                 </div>
 
-                                {/* Customization and Sign out */}
                                 <div className="space-y-6">
                                     <label className="text-xs font-bold opacity-40 uppercase">Account Role</label>
                                     <div className="p-4 bg-black/40 rounded-2xl border border-white/10 font-bold tracking-widest uppercase text-xs">Role: <span className={`text-purple-400 glow-${profile?.role} p-1 rounded-md`}>{profile?.role}</span></div>
@@ -445,34 +438,33 @@
                                     <label className="text-xs font-bold opacity-40 uppercase">Status Indicator</label>
                                     <div className="grid grid-cols-3 gap-2">
                                         {['Online', 'Away', 'DND'].map(s => (
-                                            <button key={s} onClick={() => updateStatusOrTheme('status', s)} className={`p-4 flex items-center gap-2 justify-center rounded-2xl border border-white/10 font-bold ${profile.status === s ? 'bg-purple-600' : ''}`}><div className={`status-dot status-${s}`}></div>{s}</button>
+                                            <button key={s} onClick={() => updateStatusOrTheme('status', s)} className={`p-4 flex items-center gap-2 justify-center rounded-2xl border border-white/10 font-bold ${profile?.status === s ? 'bg-purple-600' : ''}`}><div className={`status-dot status-${s}`}></div>{s}</button>
                                         ))}
                                     </div>
                                     
                                     <label className="text-xs font-bold opacity-40 uppercase">Interface Theme</label>
                                     <div className="grid grid-cols-4 gap-2">
                                         {['Midnight', 'Purple', 'Blue', 'Black'].map(t => (
-                                            <button key={t} onClick={() => updateStatusOrTheme('theme', t)} className={`p-4 rounded-2xl border border-white/10 font-bold ${profile.theme === t ? 'bg-purple-600 border-purple-600' : ''}`}>{t}</button>
+                                            <button key={t} onClick={() => updateStatusOrTheme('theme', t)} className={`p-4 rounded-2xl border border-white/10 font-bold ${profile?.theme === t ? 'bg-purple-600 border-purple-600' : ''}`}>{t}</button>
                                         ))}
                                     </div>
-                                    <button onClick={() => supabaseClient.auth.signOut()} className="w-full text-red-500 font-bold uppercase text-xs pt-10">☠️ Deactivate Current Session (Sign Out)</button>
+                                    <button onClick={() => supabaseClient.auth.signOut()} className="w-full text-red-500 font-bold uppercase text-xs pt-10 hover:underline">☠️ Deactivate Current Session (Sign Out)</button>
                                 </div>
                             </div>
                         )}
                         
-                        {/* GALLERY OVERLAY (Restored fully) */}
                         {showMedia && currentChat !== 'public' && (
                             <div className="absolute right-0 top-0 w-80 h-full glass p-6 z-50 overflow-y-auto">
                                 <div className="flex justify-between items-center mb-6">
                                     <h3 className="font-black tracking-tighter uppercase text-lg">Chamber Multimedia</h3>
-                                    <button onClick={() => setShowMedia(false)} className="text-lg">✕</button>
+                                    <button onClick={() => setShowMedia(false)} className="text-lg hover:text-red-400 transition">✕</button>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
                                     {messages.filter(m => m.file_url).map((m, i) => {
                                         if (m.file_type === 'image') return <img key={i} src={m.file_url} className="w-full aspect-square object-cover rounded-lg" />;
-                                        if (m.file_type === 'video') return <div key={i} className="w-full aspect-square bg-white/10 rounded-lg flex items-center justify-center">▶️ Video</div>;
-                                        if (m.file_type === 'audio') return <div key={i} className="w-full aspect-square bg-white/10 rounded-lg flex items-center justify-center">🎤 Audio</div>;
-                                        return <div key={i} className="w-full aspect-square bg-white/10 rounded-lg flex items-center justify-center">📄 File</div>;
+                                        if (m.file_type === 'video') return <div key={i} className="w-full aspect-square bg-white/10 rounded-lg flex items-center justify-center text-xs">▶️ Video</div>;
+                                        if (m.file_type === 'audio') return <div key={i} className="w-full aspect-square bg-white/10 rounded-lg flex items-center justify-center text-xs">🎤 Audio</div>;
+                                        return <div key={i} className="w-full aspect-square bg-white/10 rounded-lg flex items-center justify-center text-xs">📄 File</div>;
                                     })}
                                 </div>
                             </div>
@@ -528,7 +520,7 @@
                             <button onClick={handleAction} disabled={loading} className="w-full bg-purple-600 p-5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-purple-500 transition disabled:opacity-50">
                                 {loading ? 'Processing...' : mode}
                             </button>
-                            <p onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="text-center text-[10px] cursor-pointer mt-4 uppercase font-bold text-purple-400">Switch to {mode === 'login' ? 'Signup' : 'Login'}</p>
+                            <p onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="text-center text-[10px] cursor-pointer mt-4 uppercase font-bold text-purple-400 hover:underline">Switch to {mode === 'login' ? 'Signup' : 'Login'}</p>
                         </div>
                     </div>
                 </div>
