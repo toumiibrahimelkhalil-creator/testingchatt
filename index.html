@@ -249,48 +249,49 @@
             const [form, setForm] = useState({ email: '', password: '', username: '', role: 'Switch' });
             const [loading, setLoading] = useState(false);
 
-            const handleAction = async () => {
-                setLoading(true);
-                try {
-                    if (mode === 'signup') {
-                        // 1. Create the Auth User
-                        const { data, error: authError } = await supabaseClient.auth.signUp({ 
-                            email: form.email, 
-                            password: form.password 
-                        });
-                        
-                        if (authError) throw authError;
+const handleAction = async () => {
+    setLoading(true);
+    try {
+        if (mode === 'signup') {
+            const { data, error: authError } = await supabaseClient.auth.signUp({ 
+                email: form.email, 
+                password: form.password 
+            });
+            
+            if (authError) throw authError;
 
-                        if (data.user) {
-                            // 2. Create the Database Profile
-                            const { error: profileError } = await supabaseClient.from('profiles').insert([{ 
-                                id: data.user.id, 
-                                username: form.username, 
-                                role: form.role,
-                                status: 'Online',
-                                theme: 'Midnight'
-                            }]);
-                            if (profileError) throw profileError;
-                            alert("Signup successful! Check your email for verification.");
-                        }
-                    } else {
-                        // Login Logic
-                        const { error: loginError } = await supabaseClient.auth.signInWithPassword({ 
-                            email: form.email, 
-                            password: form.password 
-                        });
-                        if (loginError) throw loginError;
-                        
-                        // Force reload to trigger useEffect and enter the app
-                        window.location.reload();
-                    }
-                } catch (err) {
-                    alert(err.message);
-                } finally {
-                    setLoading(false);
-                }
-            };
-
+            if (data.user) {
+                // This creates the profile in your table
+                const { error: profileError } = await supabaseClient.from('profiles').insert([{ 
+                    id: data.user.id, 
+                    username: form.username, 
+                    role: form.role,
+                    status: 'Online',
+                    theme: 'Midnight'
+                }]);
+                if (profileError) throw profileError;
+                
+                // CRITICAL: Log them in immediately after signup
+                await supabaseClient.auth.signInWithPassword({ 
+                    email: form.email, 
+                    password: form.password 
+                });
+                window.location.reload(); 
+            }
+        } else {
+            const { error: loginError } = await supabaseClient.auth.signInWithPassword({ 
+                email: form.email, 
+                password: form.password 
+            });
+            if (loginError) throw loginError;
+            window.location.reload(); 
+        }
+    } catch (err) {
+        alert(err.message);
+    } finally {
+        setLoading(false);
+    }
+};
             return (
                 <div className="h-screen flex items-center justify-center bg-black">
                     <div className="glass p-10 rounded-[3rem] w-full max-w-sm border border-white/10 text-center">
