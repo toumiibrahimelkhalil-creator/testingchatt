@@ -247,14 +247,50 @@
         function AuthUI() {
             const [mode, setMode] = useState('login');
             const [form, setForm] = useState({ email: '', password: '', username: '', role: 'Switch' });
+            const [loading, setLoading] = useState(false);
+
             const handleAction = async () => {
-                if (mode === 'signup') {
-                    const { data } = await supabaseClient.auth.signUp({ email: form.email, password: form.password });
-                    if (data.user) await supabaseClient.from('profiles').insert([{ id: data.user.id, username: form.username, role: form.role }]);
-                } else {
-                    await supabaseClient.auth.signInWithPassword({ email: form.email, password: form.password });
+                setLoading(true);
+                try {
+                    if (mode === 'signup') {
+                        // 1. Create the Auth User
+                        const { data, error: authError } = await supabaseClient.auth.signUp({ 
+                            email: form.email, 
+                            password: form.password 
+                        });
+                        
+                        if (authError) throw authError;
+
+                        if (data.user) {
+                            // 2. Create the Database Profile
+                            const { error: profileError } = await supabaseClient.from('profiles').insert([{ 
+                                id: data.user.id, 
+                                username: form.username, 
+                                role: form.role,
+                                status: 'Online',
+                                theme: 'Midnight'
+                            }]);
+                            if (profileError) throw profileError;
+                            alert("Signup successful! Check your email for verification.");
+                        }
+                    } else {
+                        // Login Logic
+                        const { error: loginError } = await supabaseClient.auth.signInWithPassword({ 
+                            email: form.email, 
+                            password: form.password 
+                        });
+                        if (loginError) throw loginError;
+                        
+                        // Force reload to trigger useEffect and enter the app
+                        window.location.reload();
+                    }
+                } catch (err) {
+                    alert(err.message);
+                } finally {
+                    setLoading(false);
                 }
             };
+
             return (
                 <div className="h-screen flex items-center justify-center bg-black">
                     <div className="glass p-10 rounded-[3rem] w-full max-w-sm border border-white/10 text-center">
@@ -262,18 +298,28 @@
                         <div className="space-y-4">
                             {mode === 'signup' && (
                                 <>
-                                    <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none" placeholder="Username" onChange={e => setForm({...form, username: e.target.value})} />
-                                    <select className="w-full bg-black border border-white/10 p-4 rounded-2xl text-xs font-bold" onChange={e => setForm({...form, role: e.target.value})}>
+                                    <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none text-white" placeholder="Username" onChange={e => setForm({...form, username: e.target.value})} />
+                                    <select className="w-full bg-black border border-white/10 p-4 rounded-2xl text-xs font-bold text-white" onChange={e => setForm({...form, role: e.target.value})}>
                                         <option value="Switch">Role: Switch</option>
                                         <option value="Dominator">Role: Dominator</option>
                                         <option value="Submissive">Role: Submissive</option>
                                     </select>
                                 </>
                             )}
-                            <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none text-xs" placeholder="Email" onChange={e => setForm({...form, email: e.target.value})} />
-                            <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none text-xs" type="password" placeholder="Password" onChange={e => setForm({...form, password: e.target.value})} />
-                            <button onClick={handleAction} className="w-full bg-purple-600 p-5 rounded-2xl font-black text-xs uppercase tracking-widest">{mode}</button>
-                            <p onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="text-center text-[10px] opacity-40 cursor-pointer mt-4 uppercase font-bold">Switch to {mode === 'login' ? 'Signup' : 'Login'}</p>
+                            <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none text-white text-xs" placeholder="Email" onChange={e => setForm({...form, email: e.target.value})} />
+                            <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none text-white text-xs" type="password" placeholder="Password" onChange={e => setForm({...form, password: e.target.value})} />
+                            
+                            <button 
+                                onClick={handleAction} 
+                                disabled={loading}
+                                className="w-full bg-purple-600 p-5 rounded-2xl font-black text-xs uppercase tracking-widest hover:bg-purple-500 transition disabled:opacity-50"
+                            >
+                                {loading ? 'Processing...' : mode}
+                            </button>
+                            
+                            <p onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="text-center text-[10px] opacity-40 cursor-pointer mt-4 uppercase font-bold">
+                                Switch to {mode === 'login' ? 'Signup' : 'Login'}
+                            </p>
                         </div>
                     </div>
                 </div>
