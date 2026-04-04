@@ -98,6 +98,32 @@
                 await supabaseClient.from('profiles').update({ avatar_url: publicUrl }).eq('id', session.user.id);
                 fetchProfile();
             };
+            const handleProfilePicUpload = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    
+    const fileExt = file.name.split('.').pop();
+    const fileName = `${session.user.id}-${Math.random()}.${fileExt}`;
+    
+    // 1. Upload to Storage
+    const { data, error } = await supabaseClient.storage
+        .from('uploads')
+        .upload(fileName, file);
+        
+    if (error) return alert("Upload failed: " + error.message);
+
+    // 2. Get Public URL
+    const { data: { publicUrl } } = supabaseClient.storage
+        .from('uploads')
+        .getPublicUrl(fileName);
+
+    // 3. Update the Profile table
+    const { error: updateError } = await supabaseClient.from('profiles')
+        .update({ avatar_url: publicUrl })
+        .eq('id', session.user.id);
+
+    if (!updateError) fetchProfile();
+};
 
             const handleAddFriend = async () => {
                 const { data: target } = await supabaseClient.from('profiles').select('id').eq('username', searchUsername).single();
@@ -235,6 +261,25 @@
                 </div>
             );
         }
+        <div className="mt-4 flex items-center gap-3">
+    <label className="cursor-pointer group relative">
+        <div className="w-12 h-12 rounded-full bg-purple-900 border border-purple-500 overflow-hidden">
+            {profile.avatar_url ? 
+                <img src={profile.avatar_url} className="w-full h-full object-cover" /> : 
+                <div className="flex items-center justify-center h-full opacity-50">📷</div>
+            }
+        </div>
+        <input type="file" className="hidden" onChange={handleProfilePicUpload} accept="image/*" />
+    </label>
+    <div className="flex-1">
+        <input 
+            className="bg-transparent font-bold text-sm focus:border-b border-purple-500 outline-none w-full"
+            defaultValue={profile.username}
+            onBlur={(e) => handleUpdateProfile(e.target.value)}
+        />
+        <p className="text-[10px] opacity-50 uppercase">{profile.role}</p>
+    </div>
+</div>
 
         const root = ReactDOM.createRoot(document.getElementById('root'));
         root.render(<App />);
