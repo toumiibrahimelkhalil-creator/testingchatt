@@ -10,8 +10,25 @@
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
     <style>
-        body { background: #08080a; color: #e2e2e2; font-family: 'Inter', sans-serif; height: 100vh; overflow: hidden; }
-        .glass { background: rgba(20, 20, 25, 0.7); backdrop-filter: blur(20px); border-right: 1px solid rgba(255,255,255,0.05); }
+        body { background: #08080a; color: #e2e2e2; font-family: 'Inter', sans-serif; height: 100vh; overflow: hidden; position: relative; }
+
+        /* ── Animated glass orbs ── */
+        .bg-orbs { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+        .orb { position: absolute; border-radius: 50%; filter: blur(90px); opacity: 0.28; animation: floatOrb linear infinite; }
+        .orb1 { width:620px; height:620px; background:#6a00c8; top:-200px;   left:-160px;  animation-duration:20s; }
+        .orb2 { width:500px; height:500px; background:#d500f9; top:35%;      right:-180px; animation-duration:25s; animation-delay:-9s; }
+        .orb3 { width:400px; height:400px; background:#3a00a8; bottom:-140px;left:25%;     animation-duration:18s; animation-delay:-5s; }
+        .orb4 { width:340px; height:340px; background:#9400e0; top:15%;      left:40%;     animation-duration:28s; animation-delay:-13s; }
+        @keyframes floatOrb {
+            0%   { transform: translate(0,0)        scale(1);    }
+            25%  { transform: translate(65px,-45px) scale(1.06); }
+            50%  { transform: translate(-45px,75px) scale(0.94); }
+            75%  { transform: translate(85px,30px)  scale(1.08); }
+            100% { transform: translate(0,0)        scale(1);    }
+        }
+        #root { position: relative; z-index: 1; }
+
+        .glass { background: rgba(14, 10, 26, 0.60); backdrop-filter: blur(28px); -webkit-backdrop-filter: blur(28px); border-right: 1px solid rgba(255,255,255,0.06); }
         .active-tab { border-left: 4px solid #d500f9; background: rgba(213, 0, 249, 0.15); color: #d500f9; }
         .msg-mine { background: linear-gradient(135deg, #6a1b9a, #4a148c); border-radius: 18px 18px 2px 18px; }
         .msg-theirs { background: #1e1e24; border: 1px solid #333; border-radius: 18px 18px 18px 2px; }
@@ -25,9 +42,34 @@
         .btn-stop { background: #ff1744; box-shadow: 0 0 20px rgba(255, 23, 68, 0.4); }
         .vibe-btn:active { transform: scale(0.95); opacity: 0.8; }
         input[type=range] { accent-color: #d500f9; cursor: pointer; }
+
+        /* ── Call overlay ── */
+        .call-overlay { position:fixed; inset:0; z-index:200; background:rgba(4,2,14,0.88); backdrop-filter:blur(32px); display:flex; flex-direction:column; align-items:center; justify-content:center; gap:26px; }
+        .call-videos  { display:flex; gap:16px; flex-wrap:wrap; justify-content:center; }
+        .call-videos video { width:340px; max-width:90vw; height:240px; border-radius:20px; background:#0d0818; border:2px solid rgba(213,0,249,0.4); object-fit:cover; }
+        .call-btn { width:64px; height:64px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:26px; cursor:pointer; transition:transform .15s; border:none; }
+        .call-btn:active { transform:scale(0.9); }
+        .call-btn-end  { background:#ff1744; box-shadow:0 0 28px rgba(255,23,68,.5); }
+        .call-btn-mute { background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.2)!important; }
+        .call-btn-cam  { background:rgba(255,255,255,.1); border:1px solid rgba(255,255,255,.2)!important; }
+        .call-actions  { display:flex; gap:20px; }
+        .call-name   { font-size:22px; font-weight:900; color:#fff; text-shadow:0 0 20px rgba(213,0,249,.6); }
+        .call-status { font-size:11px; text-transform:uppercase; opacity:.45; letter-spacing:.15em; }
+        .incoming-banner { position:fixed; bottom:80px; right:24px; z-index:150; background:rgba(18,10,36,0.92); backdrop-filter:blur(20px); border:1px solid rgba(213,0,249,0.4); border-radius:22px; padding:18px 22px; display:flex; align-items:center; gap:14px; box-shadow:0 8px 40px rgba(213,0,249,.2); animation:slideUp .3s ease; }
+        @keyframes slideUp { from{transform:translateY(40px);opacity:0} to{transform:translateY(0);opacity:1} }
+        .hdr-call-btn { background:rgba(213,0,249,0.15); border:1px solid rgba(213,0,249,0.3); border-radius:10px; padding:7px 14px; cursor:pointer; font-size:17px; transition:background .2s; }
+        .hdr-call-btn:hover { background:rgba(213,0,249,0.3); }
     </style>
 </head>
 <body>
+    <!-- Glassmorphism animated background -->
+    <div class="bg-orbs">
+        <div class="orb orb1"></div>
+        <div class="orb orb2"></div>
+        <div class="orb orb3"></div>
+        <div class="orb orb4"></div>
+    </div>
+
     <div id="root"></div>
 
     <script type="text/babel">
@@ -56,6 +98,12 @@
             const vibeInterval = useRef(null);
             const chatEndRef = useRef(null);
 
+            // Call State
+            const [activeCall,   setActiveCall]   = useState(null);
+            const [incomingCall, setIncomingCall] = useState(null);
+            const pcRef = useRef(null);
+            const ICE = { iceServers:[{urls:'stun:stun.l.google.com:19302'},{urls:'stun:stun1.l.google.com:19302'}] };
+
             useEffect(() => {
                 supabaseClient.auth.getSession().then(({ data: { session } }) => setSession(session));
                 supabaseClient.auth.onAuthStateChange((_event, session) => setSession(session));
@@ -78,6 +126,11 @@
                         .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchProfile())
                         .subscribe();
 
+                    // Call signalling channel
+                    const callCh = supabaseClient.channel(`calls:${session.user.id}`)
+                        .on('broadcast', { event: 'signal' }, ({ payload }) => handleSignal(payload))
+                        .subscribe();
+
                     const checkGP = () => setHasGamepad(Object.values(navigator.getGamepads()).some(g => g !== null));
                     window.addEventListener("gamepadconnected", checkGP);
                     window.addEventListener("gamepaddisconnected", checkGP);
@@ -85,6 +138,7 @@
                     return () => {
                         supabaseClient.removeChannel(vibeChannel);
                         supabaseClient.removeChannel(channel);
+                        supabaseClient.removeChannel(callCh);
                         stopLocalVibe();
                     };
                 }
@@ -124,6 +178,78 @@
                     type: 'broadcast', event: 'vibrate',
                     payload: { action, settings: intensity, sender: profile?.username }
                 });
+            };
+
+            // ── CALL FUNCTIONS ──
+            const sendSignal = async (toId, payload) => {
+                await supabaseClient.channel(`calls:${toId}`).send({ type: 'broadcast', event: 'signal', payload });
+            };
+
+            const handleSignal = async ({ type, ...rest }) => {
+                if      (type === 'offer')  setIncomingCall({ from: rest.from, fromName: rest.fromName, isVideo: rest.isVideo, offer: rest.offer });
+                else if (type === 'answer') await pcRef.current?.setRemoteDescription(new RTCSessionDescription(rest.answer));
+                else if (type === 'ice')    await pcRef.current?.addIceCandidate(new RTCIceCandidate(rest.candidate));
+                else if (type === 'end')    hangUp(false);
+            };
+
+            const makePeer = (remoteId) => {
+                const pc = new RTCPeerConnection(ICE);
+                pc.onicecandidate = e => { if (e.candidate) sendSignal(remoteId, { type: 'ice', candidate: e.candidate }); };
+                pc.ontrack = e => setActiveCall(prev => prev ? { ...prev, remoteStream: e.streams[0], status: 'Connected' } : prev);
+                pcRef.current = pc;
+                return pc;
+            };
+
+            const startCall = async (friendId, friendName, isVideo) => {
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideo }).catch(() => null);
+                if (!stream) return alert('Could not access ' + (isVideo ? 'camera/' : '') + 'microphone. Check browser permissions.');
+                const pc = makePeer(friendId);
+                stream.getTracks().forEach(t => pc.addTrack(t, stream));
+                const offer = await pc.createOffer();
+                await pc.setLocalDescription(offer);
+                await sendSignal(friendId, { type: 'offer', from: session.user.id, fromName: profile.username, isVideo, offer });
+                setActiveCall({ remoteName: friendName, remoteId: friendId, isVideo, status: 'Calling…', localStream: stream, remoteStream: null, isMuted: false, isCamOff: false });
+            };
+
+            const answerCall = async () => {
+                if (!incomingCall) return;
+                const { from, fromName, isVideo, offer } = incomingCall;
+                const stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: isVideo }).catch(() => null);
+                if (!stream) return alert('Could not access microphone.');
+                const pc = makePeer(from);
+                stream.getTracks().forEach(t => pc.addTrack(t, stream));
+                await pc.setRemoteDescription(new RTCSessionDescription(offer));
+                const answer = await pc.createAnswer();
+                await pc.setLocalDescription(answer);
+                await sendSignal(from, { type: 'answer', answer });
+                setIncomingCall(null);
+                setActiveCall({ remoteName: fromName, remoteId: from, isVideo, status: 'Connected', localStream: stream, remoteStream: null, isMuted: false, isCamOff: false });
+            };
+
+            const declineCall = async () => {
+                if (incomingCall) await sendSignal(incomingCall.from, { type: 'end' });
+                setIncomingCall(null);
+            };
+
+            const hangUp = (notify = true) => {
+                if (notify && activeCall) sendSignal(activeCall.remoteId, { type: 'end' });
+                pcRef.current?.close(); pcRef.current = null;
+                activeCall?.localStream?.getTracks().forEach(t => t.stop());
+                setActiveCall(null);
+            };
+
+            const toggleMute = () => {
+                if (!activeCall?.localStream) return;
+                const v = !activeCall.isMuted;
+                activeCall.localStream.getAudioTracks().forEach(t => t.enabled = !v);
+                setActiveCall(p => ({ ...p, isMuted: v }));
+            };
+
+            const toggleCam = () => {
+                if (!activeCall?.localStream) return;
+                const v = !activeCall.isCamOff;
+                activeCall.localStream.getVideoTracks().forEach(t => t.enabled = !v);
+                setActiveCall(p => ({ ...p, isCamOff: v }));
             };
 
             // EXISTING SOCIAL LOGIC
@@ -168,6 +294,37 @@
             if (!session) return <AuthUI />;
 
             return (
+                <>
+                {/* ── Active call overlay ── */}
+                {activeCall && (
+                    <div className="call-overlay">
+                        <div className="call-name">{activeCall.remoteName}</div>
+                        <div className="call-status">{activeCall.status}</div>
+                        {activeCall.isVideo && (
+                            <div className="call-videos">
+                                <video autoPlay playsInline ref={el => { if (el && activeCall.remoteStream) el.srcObject = activeCall.remoteStream; }} />
+                                <video autoPlay playsInline muted ref={el => { if (el && activeCall.localStream) el.srcObject = activeCall.localStream; }} style={{opacity:0.85, border:'1px solid rgba(255,255,255,0.2)'}} />
+                            </div>
+                        )}
+                        {!activeCall.isVideo && activeCall.remoteStream && <div style={{fontSize:72}}>🔊</div>}
+                        <div className="call-actions">
+                            <button className="call-btn call-btn-mute" onClick={toggleMute}>{activeCall.isMuted ? '🔇' : '🎙️'}</button>
+                            {activeCall.isVideo && <button className="call-btn call-btn-cam" onClick={toggleCam}>{activeCall.isCamOff ? '📷' : '🎥'}</button>}
+                            <button className="call-btn call-btn-end" onClick={() => hangUp(true)}>📵</button>
+                        </div>
+                    </div>
+                )}
+                {/* ── Incoming call toast ── */}
+                {incomingCall && !activeCall && (
+                    <div className="incoming-banner">
+                        <div>
+                            <div style={{fontWeight:900,fontSize:14}}>{incomingCall.fromName}</div>
+                            <div style={{fontSize:10,opacity:.45,textTransform:'uppercase',letterSpacing:'.1em'}}>Incoming {incomingCall.isVideo ? 'Video' : 'Voice'} Call</div>
+                        </div>
+                        <button onClick={answerCall}  style={{background:'#00c853',border:'none',borderRadius:'50%',width:44,height:44,fontSize:20,cursor:'pointer'}}>📞</button>
+                        <button onClick={declineCall} style={{background:'#ff1744',border:'none',borderRadius:'50%',width:44,height:44,fontSize:20,cursor:'pointer'}}>📵</button>
+                    </div>
+                )}
                 <div className="flex h-screen">
                     {/* SIDEBAR */}
                     <div className="w-20 lg:w-72 glass flex flex-col py-6">
@@ -203,7 +360,13 @@
                                         <div className="flex items-center gap-3">
                                             <span className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></span> {currentChatName}
                                         </div>
-                                        <div className="text-[10px] font-black opacity-30 uppercase tracking-[0.2em]">{hasGamepad ? 'Device Linked' : 'No Controller'}</div>
+                                        <div className="flex items-center gap-3">
+                                            {currentChat !== 'public' && (<>
+                                                <button className="hdr-call-btn" title="Voice Call" onClick={() => startCall(currentChat, currentChatName, false)}>📞</button>
+                                                <button className="hdr-call-btn" title="Video Call" onClick={() => startCall(currentChat, currentChatName, true)}>🎥</button>
+                                            </>)}
+                                            <div className="text-[10px] font-black opacity-30 uppercase tracking-[0.2em]">{hasGamepad ? 'Device Linked' : 'No Controller'}</div>
+                                        </div>
                                     </header>
 
                                     {/* RUMBLECTRL SECTION (HALF TOP OF CHAT) */}
@@ -310,6 +473,7 @@
                         )}
                     </div>
                 </div>
+                </>
             );
         }
 
@@ -323,7 +487,7 @@
                 } else await supabaseClient.auth.signInWithPassword({ email: form.email, password: form.password });
             };
             return (
-                <div className="h-screen flex items-center justify-center bg-black">
+                <div className="h-screen flex items-center justify-center bg-transparent">
                     <div className="glass p-10 rounded-[3rem] w-full max-w-sm border border-white/10 text-center">
                         <h1 className="text-4xl font-black text-purple-500 italic mb-10">K-D WORLD</h1>
                         <div className="space-y-4">
