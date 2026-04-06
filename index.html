@@ -27,13 +27,10 @@
             overflow: hidden; 
         }
 
-        /* Scrollbar Styling */
         ::-webkit-scrollbar { width: 6px; }
         ::-webkit-scrollbar-track { background: transparent; }
         ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
-        ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
 
-        /* UI Elements */
         .glass { 
             background: var(--glass-bg); 
             backdrop-filter: blur(24px); 
@@ -60,44 +57,10 @@
         .nav-btn:hover:not(.active-tab) { background: rgba(255,255,255,0.03); color: #fff; }
 
         .msg-bubble { transition: transform 0.2s; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
-        .msg-bubble:hover { transform: translateY(-2px); }
         .msg-mine { background: linear-gradient(135deg, #8e24aa, #4a148c); border-radius: 18px 18px 2px 18px; }
         .msg-theirs { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 18px 18px 18px 2px; }
         
-        .media-content { max-width: 100%; max-height: 250px; border-radius: 12px; margin-top: 8px; border: 1px solid rgba(255,255,255,0.1); object-fit: cover; }
-        
-        /* RumbleCTRL Section */
-        .vibe-panel { 
-            background: linear-gradient(180deg, rgba(213, 0, 249, 0.05) 0%, transparent 100%); 
-            border-bottom: 1px solid var(--glass-border); 
-        }
-        .btn-action { transition: all 0.2s; text-transform: uppercase; font-weight: 900; letter-spacing: 1px; }
-        .btn-start { background: var(--primary); box-shadow: 0 0 20px var(--primary-glow); }
-        .btn-start:hover { box-shadow: 0 0 30px var(--primary-glow); transform: translateY(-1px); }
-        .btn-stop { background: #ff1744; box-shadow: 0 0 20px rgba(255, 23, 68, 0.4); }
-        .btn-stop:hover { box-shadow: 0 0 30px rgba(255, 23, 68, 0.6); transform: translateY(-1px); }
-        .vibe-btn:active { transform: scale(0.95); }
-        
         input[type=range] { accent-color: var(--primary); cursor: pointer; height: 4px; background: rgba(255,255,255,0.1); border-radius: 4px; appearance: none; }
-        input[type=range]::-webkit-slider-thumb { appearance: none; width: 16px; height: 16px; background: var(--primary); border-radius: 50%; box-shadow: 0 0 10px var(--primary-glow); }
-
-        /* Video Call Modals */
-        .call-overlay {
-            position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-            background: rgba(0,0,0,0.85); backdrop-filter: blur(10px);
-            display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 50;
-        }
-        .video-container { position: relative; width: 80%; max-width: 900px; aspect-ratio: 16/9; background: #000; border-radius: 24px; overflow: hidden; border: 1px solid rgba(255,255,255,0.1); box-shadow: 0 20px 50px rgba(0,0,0,0.5); }
-        .remote-video { width: 100%; height: 100%; object-fit: cover; }
-        .local-video { position: absolute; bottom: 20px; right: 20px; width: 200px; aspect-ratio: 16/9; object-fit: cover; border-radius: 12px; border: 2px solid rgba(255,255,255,0.2); background: #111; box-shadow: 0 10px 20px rgba(0,0,0,0.5); }
-        
-        /* Animations */
-        @keyframes pulse-ring {
-            0% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(213, 0, 249, 0.7); }
-            70% { transform: scale(1); box-shadow: 0 0 0 15px rgba(213, 0, 249, 0); }
-            100% { transform: scale(0.8); box-shadow: 0 0 0 0 rgba(213, 0, 249, 0); }
-        }
-        .calling-ring { animation: pulse-ring 2s infinite; }
     </style>
 </head>
 <body>
@@ -110,8 +73,6 @@
         const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InljZGNzemRsZGtjY253ZWZycGlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyNzkyMzcsImV4cCI6MjA5MDg1NTIzN30.i7kxP4TXxuIujsRwGMOC08-NYJopFj6x0OB4BkN9dfQ";
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-        const rtcConfig = { iceServers: [{ urls: ['stun:stun1.l.google.com:19302', 'stun:stun2.l.google.com:19302'] }] };
-
         function App() {
             const [session, setSession] = useState(null);
             const [profile, setProfile] = useState(null);
@@ -123,20 +84,9 @@
             const [requests, setRequests] = useState([]);
             const [text, setText] = useState('');
             const [searchName, setSearchName] = useState('');
-            const [isUploading, setIsUploading] = useState(false);
-            const [hasGamepad, setHasGamepad] = useState(false);
-            
             const [intensity, setIntensity] = useState({ heavy: 1.0, light: 1.0 });
             const vibeInterval = useRef(null);
             const chatEndRef = useRef(null);
-
-            const [callStatus, setCallStatus] = useState('idle');
-            const [incomingCallData, setIncomingCallData] = useState(null);
-            const localVideoRef = useRef(null);
-            const remoteVideoRef = useRef(null);
-            const peerConnection = useRef(null);
-            const localStream = useRef(null);
-            const signalingChannel = useRef(null);
 
             useEffect(() => {
                 supabaseClient.auth.getSession().then(({ data: { session } }) => setSession(session));
@@ -147,509 +97,199 @@
                 if (session) {
                     fetchProfile();
                     refreshSocial();
-
-                    const vibeChannel = supabaseClient.channel(`vibe-${currentChat}`)
-                        .on('broadcast', { event: 'vibrate' }, ({ payload }) => {
-                            if (payload.action === 'START') startLocalVibe(payload.settings);
-                            else stopLocalVibe();
-                        }).subscribe();
-
                     const dbChannel = supabaseClient.channel('sync')
                         .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => fetchMessages())
                         .on('postgres_changes', { event: '*', schema: 'public', table: 'friends' }, () => refreshSocial())
-                        .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchProfile())
                         .subscribe();
-
-                    signalingChannel.current = supabaseClient.channel(`webrtc-${session.user.id}`)
-                        .on('broadcast', { event: 'call-signal' }, async ({ payload }) => {
-                            handleSignalingData(payload);
-                        }).subscribe();
-
-                    const checkGP = () => setHasGamepad(Object.values(navigator.getGamepads()).some(g => g !== null));
-                    window.addEventListener("gamepadconnected", checkGP);
-                    window.addEventListener("gamepaddisconnected", checkGP);
-
-                    return () => {
-                        supabaseClient.removeChannel(vibeChannel);
-                        supabaseClient.removeChannel(dbChannel);
-                        supabaseClient.removeChannel(signalingChannel.current);
-                        stopLocalVibe();
-                        endCall(false);
-                    };
+                    return () => supabaseClient.removeChannel(dbChannel);
                 }
             }, [session, currentChat]);
 
             useEffect(() => { fetchMessages(); }, [currentChat, session]);
             useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-            // --- WEBRTC LOGIC ---
-            const sendSignal = async (targetId, data) => {
-                await supabaseClient.channel(`webrtc-${targetId}`).send({
-                    type: 'broadcast', event: 'call-signal',
-                    payload: { ...data, senderId: session.user.id, senderName: profile?.username }
-                });
-            };
-
-            const handleSignalingData = async (data) => {
-                if (data.type === 'offer') {
-                    setIncomingCallData(data);
-                    setCallStatus('incoming');
-                } else if (data.type === 'answer' && peerConnection.current) {
-                    await peerConnection.current.setRemoteDescription(new RTCSessionDescription(data.answer));
-                } else if (data.type === 'ice-candidate' && peerConnection.current) {
-                    await peerConnection.current.addIceCandidate(new RTCIceCandidate(data.candidate));
-                } else if (data.type === 'end') {
-                    endCall(false);
-                }
-            };
-
-            const setupPeerConnection = (targetId) => {
-                const pc = new RTCPeerConnection(rtcConfig);
-                pc.onicecandidate = (event) => {
-                    if (event.candidate) sendSignal(targetId, { type: 'ice-candidate', candidate: event.candidate });
-                };
-                pc.ontrack = (event) => {
-                    if (remoteVideoRef.current) remoteVideoRef.current.srcObject = event.streams[0];
-                };
-                if (localStream.current) {
-                    localStream.current.getTracks().forEach(track => pc.addTrack(track, localStream.current));
-                }
-                peerConnection.current = pc;
-                return pc;
-            };
-
-            const startCall = async () => {
-                if (currentChat === 'public') return;
-                try {
-                    setCallStatus('ringing');
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                    localStream.current = stream;
-                    if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-
-                    const pc = setupPeerConnection(currentChat);
-                    const offer = await pc.createOffer();
-                    await pc.setLocalDescription(offer);
-                    sendSignal(currentChat, { type: 'offer', offer });
-                } catch (err) {
-                    alert("Could not access camera/microphone.");
-                    setCallStatus('idle');
-                }
-            };
-
-            const acceptCall = async () => {
-                if (!incomingCallData) return;
-                try {
-                    setCallStatus('connected');
-                    const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
-                    localStream.current = stream;
-                    
-                    setTimeout(async () => {
-                        if (localVideoRef.current) localVideoRef.current.srcObject = stream;
-                        const pc = setupPeerConnection(incomingCallData.senderId);
-                        await pc.setRemoteDescription(new RTCSessionDescription(incomingCallData.offer));
-                        const answer = await pc.createAnswer();
-                        await pc.setLocalDescription(answer);
-                        sendSignal(incomingCallData.senderId, { type: 'answer', answer });
-                    }, 100);
-                    
-                } catch (err) {
-                    alert("Could not access camera/microphone.");
-                    endCall();
-                }
-            };
-
-            const endCall = (broadcast = true) => {
-                if (broadcast && (callStatus === 'connected' || callStatus === 'ringing')) {
-                    const target = incomingCallData ? incomingCallData.senderId : currentChat;
-                    sendSignal(target, { type: 'end' });
-                }
-                if (peerConnection.current) { peerConnection.current.close(); peerConnection.current = null; }
-                if (localStream.current) { localStream.current.getTracks().forEach(t => t.stop()); localStream.current = null; }
-                setCallStatus('idle');
-                setIncomingCallData(null);
-            };
-
-            // --- VIBRATION ENGINE ---
-            const startLocalVibe = (settings) => {
-                if (vibeInterval.current) clearInterval(vibeInterval.current);
-                const run = () => {
-                    const gps = navigator.getGamepads();
-                    for (const gp of gps) {
-                        if (gp?.vibrationActuator) {
-                            gp.vibrationActuator.playEffect("dual-rumble", {
-                                startDelay: 0, duration: 250, 
-                                weakMagnitude: settings.light, strongMagnitude: settings.heavy
-                            });
-                        }
-                    }
-                };
-                run();
-                vibeInterval.current = setInterval(run, 180); 
-            };
-
-            const stopLocalVibe = () => {
-                if (vibeInterval.current) clearInterval(vibeInterval.current);
-                vibeInterval.current = null;
-            };
-
-            const broadcastVibration = async (action) => {
-                if (action === 'START') startLocalVibe(intensity);
-                else stopLocalVibe();
-
-                await supabaseClient.channel(`vibe-${currentChat}`).send({
-                    type: 'broadcast', event: 'vibrate',
-                    payload: { action, settings: intensity, sender: profile?.username }
-                });
-            };
-
-            // --- FIXED SOCIAL AND DATA LOGIC ---
             const fetchProfile = async () => {
-                const { data, error } = await supabaseClient.from('profiles').select('*').eq('id', session.user.id).single();
-                if (error) console.error("Error fetching profile:", error);
+                const { data } = await supabaseClient.from('profiles').select('*').eq('id', session.user.id).single();
                 if (data) setProfile(data);
             };
 
             const refreshSocial = async () => {
-                // Filter out null profiles to prevent UI crash if RLS blocks the join
-                const { data: fList, error: fErr } = await supabaseClient.from('friends').select('*, friend:profiles!friends_friend_id_fkey(*), sender:profiles!friends_user_id_fkey(*)').eq('status', 1).or(`user_id.eq.${session.user.id},friend_id.eq.${session.user.id}`);
-                const { data: rList, error: rErr } = await supabaseClient.from('friends').select('*, sender:profiles!friends_user_id_fkey(*)').eq('friend_id', session.user.id).eq('status', 0);
+                const { data: fList } = await supabaseClient.from('friends')
+                    .select('*, friend:profiles!friends_friend_id_fkey(*), sender:profiles!friends_user_id_fkey(*)')
+                    .eq('status', 1)
+                    .or(`user_id.eq.${session.user.id},friend_id.eq.${session.user.id}`);
                 
-                if (fErr) console.error("Friends fetch error:", fErr);
+                const { data: rList } = await supabaseClient.from('friends')
+                    .select('*, sender:profiles!friends_user_id_fkey(*)')
+                    .eq('friend_id', session.user.id)
+                    .eq('status', 0);
+                
                 setFriends(fList?.map(f => f.user_id === session.user.id ? f.friend : f.sender).filter(Boolean) || []);
                 setRequests(rList || []);
             };
 
             const fetchMessages = async () => {
                 let query = supabaseClient.from('messages').select('*, profiles!messages_sender_id_fkey(*)').order('created_at', { ascending: true });
-                
-                if (currentChat === 'public') {
-                    // Explicitly targeting null for the public chamber
-                    query = query.is('receiver_id', null);
-                } else {
-                    query = query.or(`and(sender_id.eq.${session.user.id},receiver_id.eq.${currentChat}),and(sender_id.eq.${currentChat},receiver_id.eq.${session.user.id})`);
-                }
-                
-                const { data, error } = await query;
-                if (error) {
-                    console.error("Fetch Messages Error:", error);
-                    // Fallback execution if the profile join fails due to permissions
-                    let fallbackQuery = supabaseClient.from('messages').select('*').order('created_at', { ascending: true });
-                    if (currentChat === 'public') fallbackQuery = fallbackQuery.is('receiver_id', null);
-                    else fallbackQuery = fallbackQuery.or(`and(sender_id.eq.${session.user.id},receiver_id.eq.${currentChat}),and(sender_id.eq.${currentChat},receiver_id.eq.${session.user.id})`);
-                    
-                    const { data: fbData } = await fallbackQuery;
-                    setMessages(fbData || []);
-                } else {
-                    setMessages(data || []);
-                }
+                if (currentChat === 'public') query = query.is('receiver_id', null);
+                else query = query.or(`and(sender_id.eq.${session.user.id},receiver_id.eq.${currentChat}),and(sender_id.eq.${currentChat},receiver_id.eq.${session.user.id})`);
+                const { data } = await query;
+                setMessages(data || []);
             };
 
             const sendMsg = async () => {
                 if (!text.trim()) return;
-                
-                const { error } = await supabaseClient.from('messages').insert([{ 
+                await supabaseClient.from('messages').insert([{ 
                     sender_id: session.user.id, 
                     receiver_id: currentChat === 'public' ? null : currentChat, 
                     content: text 
                 }]);
-                
-                if (error) {
-                    alert("Failed to send message: " + error.message);
-                }
                 setText('');
             };
 
             const handleAddFriend = async () => {
-                if (!searchName.trim()) return;
-                
-                // Using ilike for case-insensitive search
-                const { data: target, error: searchError } = await supabaseClient.from('profiles').select('id').ilike('username', searchName).single();
-                
-                if (searchError || !target) {
-                    alert(`User not found or Search Error: ${searchError?.message || 'Missing SELECT policy on profiles'}`);
-                    return;
-                }
-                
-                const { error: insertError } = await supabaseClient.from('friends').insert([{ user_id: session.user.id, friend_id: target.id, status: 0 }]);
-                
-                if (insertError) {
-                    if (insertError.code === '23505') alert("Friend request already sent or you are already friends!");
-                    else alert("Failed to send request: " + insertError.message);
-                } else {
-                    alert("Friend Request Sent Successfully!");
-                    setSearchName('');
-                    refreshSocial();
-                }
+                const { data: target } = await supabaseClient.from('profiles').select('id').ilike('username', searchName).single();
+                if (!target) return alert("User not found!");
+                const { error } = await supabaseClient.from('friends').insert([{ user_id: session.user.id, friend_id: target.id, status: 0 }]);
+                if (error) alert("Request already exists or already friends!");
+                else { alert("Request Sent!"); setSearchName(''); }
             };
 
-            const uploadFile = async (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                setIsUploading(true);
-                const path = `chat_media/${Math.random()}.${file.name.split('.').pop()}`;
-                const { error: uploadError } = await supabaseClient.storage.from('uploads').upload(path, file);
-                
-                if (uploadError) {
-                    alert("Upload failed: " + uploadError.message);
-                    setIsUploading(false);
-                    return;
-                }
+            const acceptFriend = async (id) => {
+                await supabaseClient.from('friends').update({ status: 1 }).eq('id', id);
+                refreshSocial();
+            };
 
-                const { data: { publicUrl } } = supabaseClient.storage.from('uploads').getPublicUrl(path);
-                let type = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : 'file';
-                
-                await supabaseClient.from('messages').insert([{ 
-                    sender_id: session.user.id, 
-                    receiver_id: currentChat === 'public' ? null : currentChat, 
-                    content: `Sent a ${type}`, 
-                    file_url: publicUrl, 
-                    file_type: type 
-                }]);
-                
-                setIsUploading(false);
+            const startLocalVibe = () => {
+                if (vibeInterval.current) clearInterval(vibeInterval.current);
+                vibeInterval.current = setInterval(() => {
+                    const gps = navigator.getGamepads();
+                    for (const gp of gps) {
+                        if (gp?.vibrationActuator) {
+                            gp.vibrationActuator.playEffect("dual-rumble", {
+                                duration: 250, weakMagnitude: intensity.light, strongMagnitude: intensity.heavy
+                            });
+                        }
+                    }
+                }, 180); 
             };
 
             if (!session) return <AuthUI />;
 
             return (
                 <div className="flex h-screen w-full">
-                    {/* INCOMING CALL MODAL */}
-                    {callStatus === 'incoming' && (
-                        <div className="fixed inset-0 bg-black/80 backdrop-blur-md z-50 flex items-center justify-center">
-                            <div className="glass p-10 rounded-3xl text-center space-y-6 shadow-2xl border border-white/20">
-                                <div className="w-24 h-24 mx-auto bg-purple-600 rounded-full flex items-center justify-center text-4xl calling-ring mb-4">📞</div>
-                                <h2 className="text-2xl font-black">{incomingCallData?.senderName} is calling...</h2>
-                                <div className="flex gap-4 justify-center mt-8">
-                                    <button onClick={acceptCall} className="bg-green-500 hover:bg-green-400 text-black px-8 py-3 rounded-full font-black transition">Accept</button>
-                                    <button onClick={() => endCall(true)} className="bg-red-500 hover:bg-red-400 text-white px-8 py-3 rounded-full font-black transition">Decline</button>
-                                </div>
-                            </div>
-                        </div>
-                    )}
-
-                    {/* ACTIVE CALL OVERLAY */}
-                    {(callStatus === 'connected' || callStatus === 'ringing') && (
-                        <div className="call-overlay">
-                            <div className="w-full max-w-5xl flex justify-between px-8 mb-4">
-                                <h2 className="text-xl font-black flex items-center gap-2">
-                                    <span className="w-3 h-3 bg-red-500 rounded-full animate-pulse"></span> 
-                                    {callStatus === 'ringing' ? 'Calling...' : 'In Call'}
-                                </h2>
-                            </div>
-                            <div className="video-container">
-                                {callStatus === 'connected' ? (
-                                    <video ref={remoteVideoRef} autoPlay playsInline className="remote-video"></video>
-                                ) : (
-                                    <div className="w-full h-full flex items-center justify-center text-white/50 text-xl font-bold">Waiting for answer...</div>
-                                )}
-                                <video ref={localVideoRef} autoPlay playsInline muted className="local-video"></video>
-                            </div>
-                            <button onClick={() => endCall(true)} className="mt-8 bg-red-600 hover:bg-red-500 px-10 py-4 rounded-full font-black text-white shadow-[0_0_20px_rgba(220,38,38,0.5)] transition hover:scale-105">
-                                END CALL
-                            </button>
-                        </div>
-                    )}
-
                     {/* SIDEBAR */}
                     <div className="w-20 lg:w-72 glass flex flex-col py-8 z-10 border-r border-white/5">
-                        <div className="px-8 mb-12 hidden lg:block">
-                            <h1 className="text-3xl font-black text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600 italic tracking-tighter">K-D WORLD</h1>
-                        </div>
+                        <div className="px-8 mb-12 hidden lg:block text-2xl font-black italic text-purple-500">K-D WORLD</div>
                         <div className="flex-1 flex flex-col gap-2">
                             <button onClick={() => setView('chat')} className={`nav-btn flex items-center gap-4 ${view === 'chat' ? 'active-tab' : ''}`}>
-                                <span className="text-xl">💬</span> <span className="hidden lg:inline font-bold tracking-wide">Chambers</span>
+                                <span>💬</span> <span className="hidden lg:inline font-bold">Chambers</span>
                             </button>
                             <button onClick={() => setView('social')} className={`nav-btn flex items-center gap-4 ${view === 'social' ? 'active-tab' : ''}`}>
-                                <span className="text-xl">👥</span> <span className="hidden lg:inline font-bold tracking-wide">Social Connect</span>
+                                <span>👥</span> <span className="hidden lg:inline font-bold">Social Hub</span>
+                            </button>
+                            <button onClick={() => setView('vibe')} className={`nav-btn flex items-center gap-4 ${view === 'vibe' ? 'active-tab' : ''}`}>
+                                <span>🎮</span> <span className="hidden lg:inline font-bold">Vibration Console</span>
                             </button>
                             <button onClick={() => setView('settings')} className={`nav-btn flex items-center gap-4 ${view === 'settings' ? 'active-tab' : ''}`}>
-                                <span className="text-xl">⚙️</span> <span className="hidden lg:inline font-bold tracking-wide">Preferences</span>
+                                <span>⚙️</span> <span className="hidden lg:inline font-bold">Preferences</span>
                             </button>
-                        </div>
-                        <div className="px-8 hidden lg:flex items-center gap-3 mt-auto opacity-50">
-                            <img src={profile?.avatar_url || 'https://via.placeholder.com/100'} className="w-8 h-8 rounded-full object-cover" />
-                            <span className="text-sm font-bold">{profile?.username}</span>
                         </div>
                     </div>
 
-                    {/* MAIN CONTENT AREA */}
-                    <div className="flex-1 flex flex-col relative bg-black/40">
-                        {view === 'chat' ? (
+                    {/* MAIN CONTENT */}
+                    <div className="flex-1 flex flex-col bg-black/40">
+                        {view === 'chat' && (
                             <div className="flex flex-1 overflow-hidden">
-                                {/* FRIENDS LIST (CHAT SIDEBAR) */}
-                                <div className="w-72 border-r border-white/5 hidden lg:flex flex-col bg-white/5 backdrop-blur-sm">
-                                    <div className="p-6">
-                                        <h2 className="text-xs font-black opacity-40 uppercase tracking-widest mb-4">Rooms</h2>
-                                        <button onClick={() => {setCurrentChat('public'); setCurrentChatName('Public Chamber');}} 
-                                            className={`w-full p-4 rounded-xl text-left font-bold transition flex items-center gap-3 ${currentChat === 'public' ? 'bg-purple-600 text-white shadow-lg shadow-purple-500/20' : 'hover:bg-white/5'}`}>
-                                            🌐 Public Chamber
+                                <div className="w-72 border-r border-white/5 bg-white/5 p-4 space-y-4">
+                                    <button onClick={() => {setCurrentChat('public'); setCurrentChatName('Public Chamber');}} className={`w-full p-4 rounded-xl text-left font-bold ${currentChat === 'public' ? 'bg-purple-600' : 'hover:bg-white/5'}`}>🌐 Public Chamber</button>
+                                    <h3 className="text-xs font-black opacity-30 uppercase px-4">Direct Messages</h3>
+                                    {friends.map(f => (
+                                        <button key={f.id} onClick={() => {setCurrentChat(f.id); setCurrentChatName(f.username);}} className={`w-full p-3 rounded-xl flex items-center gap-3 font-bold ${currentChat === f.id ? 'bg-white/10' : ''}`}>
+                                            <img src={f.avatar_url || 'https://via.placeholder.com/100'} className="w-8 h-8 rounded-full object-cover" /> {f.username}
                                         </button>
-                                    </div>
-                                    <div className="px-6 flex-1 overflow-y-auto">
-                                        <h2 className="text-xs font-black opacity-40 uppercase tracking-widest mb-4 mt-2">Direct Messages</h2>
-                                        <div className="space-y-2">
-                                            {friends.map(f => (
-                                                <button key={f?.id} onClick={() => {setCurrentChat(f.id); setCurrentChatName(f.username);}} 
-                                                    className={`w-full p-3 rounded-xl flex items-center gap-3 text-sm font-bold transition ${currentChat === f?.id ? 'bg-white/10 text-white border border-white/10' : 'hover:bg-white/5 text-white/70'}`}>
-                                                    <div className="relative">
-                                                        <img src={f?.avatar_url || 'https://via.placeholder.com/100'} className="w-10 h-10 rounded-full object-cover border border-white/10" />
-                                                        <div className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-black rounded-full"></div>
-                                                    </div>
-                                                    {f?.username || 'Unknown User'}
-                                                </button>
-                                            ))}
-                                        </div>
-                                    </div>
+                                    ))}
                                 </div>
-
-                                {/* CHAT WINDOW */}
-                                <div className="flex-1 flex flex-col bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-blend-overlay">
-                                    {/* CHAT HEADER */}
-                                    <header className="px-8 py-5 border-b border-white/5 flex items-center justify-between bg-black/40 backdrop-blur-md z-10 shadow-md">
-                                        <div className="flex items-center gap-4">
-                                            <div className="w-12 h-12 rounded-full bg-gradient-to-tr from-purple-600 to-blue-500 flex items-center justify-center text-xl shadow-lg shadow-purple-500/20">
-                                                {currentChat === 'public' ? '🌐' : '👤'}
-                                            </div>
-                                            <div>
-                                                <h2 className="font-black text-lg">{currentChatName}</h2>
-                                                <div className="text-xs font-bold text-green-400 flex items-center gap-1">
-                                                    <span className="w-2 h-2 rounded-full bg-green-400 animate-pulse"></span> Online
-                                                </div>
-                                            </div>
-                                        </div>
-                                        <div className="flex items-center gap-4">
-                                            {currentChat !== 'public' && (
-                                                <button onClick={startCall} className="bg-green-500/20 text-green-400 border border-green-500/50 hover:bg-green-500 hover:text-white px-4 py-2 rounded-lg font-bold text-sm transition flex items-center gap-2">
-                                                    📞 Call
-                                                </button>
-                                            )}
-                                            <div className="text-[10px] font-black opacity-30 uppercase tracking-[0.2em] bg-white/5 px-3 py-1 rounded-full border border-white/10">
-                                                {hasGamepad ? '🎮 Linked' : '⌨️ No Controller'}
-                                            </div>
-                                        </div>
-                                    </header>
-
-                                    {/* RUMBLECTRL SECTION */}
-                                    <div className="vibe-panel p-8 flex flex-col items-center relative overflow-hidden">
-                                        <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-transparent via-purple-500 to-transparent opacity-30"></div>
-                                        <div className="grid grid-cols-2 gap-10 w-full max-w-lg mb-8 relative z-10">
-                                            <div className="flex flex-col gap-3 bg-black/40 p-4 rounded-2xl border border-white/5">
-                                                <div className="flex justify-between text-xs font-black text-purple-300 uppercase tracking-wider"><span>Heavy Motor</span><span>{Math.round(intensity.heavy * 100)}%</span></div>
-                                                <input type="range" min="0" max="1" step="0.1" value={intensity.heavy} onChange={e => setIntensity({...intensity, heavy: parseFloat(e.target.value)})} />
-                                            </div>
-                                            <div className="flex flex-col gap-3 bg-black/40 p-4 rounded-2xl border border-white/5">
-                                                <div className="flex justify-between text-xs font-black text-pink-300 uppercase tracking-wider"><span>Light Motor</span><span>{Math.round(intensity.light * 100)}%</span></div>
-                                                <input type="range" min="0" max="1" step="0.1" value={intensity.light} onChange={e => setIntensity({...intensity, light: parseFloat(e.target.value)})} />
-                                            </div>
-                                        </div>
-                                        <div className="flex gap-6 relative z-10">
-                                            <button onClick={() => broadcastVibration('START')} className="btn-action btn-start px-12 py-4 rounded-2xl text-sm shadow-[0_10px_20px_-10px_rgba(213,0,249,0.5)]">Activate Motion</button>
-                                            <button onClick={() => broadcastVibration('STOP')} className="btn-action btn-stop px-12 py-4 rounded-2xl text-sm shadow-[0_10px_20px_-10px_rgba(255,23,68,0.5)]">Halt</button>
-                                        </div>
-                                    </div>
-
-                                    {/* MESSAGES AREA */}
-                                    <div className="flex-1 p-8 overflow-y-auto flex flex-col gap-6">
-                                        {messages.length === 0 && <div className="text-center text-white/30 italic">No messages yet. Be the first to say hi!</div>}
+                                <div className="flex-1 flex flex-col">
+                                    <header className="p-6 border-b border-white/5 font-black text-xl">{currentChatName}</header>
+                                    <div className="flex-1 p-6 overflow-y-auto space-y-4">
                                         {messages.map((msg, i) => (
-                                            <div key={i} className={`flex gap-4 ${msg.sender_id === session.user.id ? 'flex-row-reverse' : 'flex-row'}`}>
-                                                <img src={msg.profiles?.avatar_url || 'https://via.placeholder.com/100'} className="w-10 h-10 rounded-full object-cover shadow-lg border border-white/10" />
-                                                <div className={`flex flex-col ${msg.sender_id === session.user.id ? 'items-end' : 'items-start'} max-w-[70%]`}>
-                                                    <span className="text-[10px] font-bold text-white/40 mb-1 uppercase tracking-wider">{msg.profiles?.username || 'Unknown Profile'}</span>
-                                                    <div className={`p-4 text-sm msg-bubble ${msg.sender_id === session.user.id ? 'msg-mine' : 'msg-theirs'}`}>
-                                                        {msg.file_url ? null : <p className="leading-relaxed">{msg.content}</p>}
-                                                        {msg.file_type === 'image' && <img src={msg.file_url} className="media-content" />}
-                                                        {msg.file_type === 'video' && <video src={msg.file_url} controls className="media-content" />}
-                                                        {msg.file_type === 'file' && <a href={msg.file_url} target="_blank" className="underline font-bold text-purple-300">📄 Download Attachment</a>}
-                                                    </div>
-                                                </div>
+                                            <div key={i} className={`flex ${msg.sender_id === session.user.id ? 'justify-end' : 'justify-start'}`}>
+                                                <div className={`p-4 rounded-2xl max-w-md msg-bubble ${msg.sender_id === session.user.id ? 'msg-mine' : 'msg-theirs'}`}>{msg.content}</div>
                                             </div>
                                         ))}
                                         <div ref={chatEndRef} />
                                     </div>
-
-                                    {/* INPUT AREA */}
-                                    <div className="p-6 bg-black/60 backdrop-blur-md border-t border-white/5">
-                                        <div className="max-w-5xl mx-auto flex gap-3 bg-white/5 p-2 rounded-2xl border border-white/10 items-center shadow-inner focus-within:border-purple-500/50 transition">
-                                            <label className="p-3 cursor-pointer hover:bg-white/10 rounded-xl transition text-xl flex items-center justify-center w-12 h-12 text-purple-400">
-                                                {isUploading ? <span className="animate-spin">⏳</span> : '📎'} 
-                                                <input type="file" className="hidden" onChange={uploadFile} disabled={isUploading} />
-                                            </label>
-                                            <input className="flex-1 bg-transparent px-4 py-3 outline-none text-white placeholder-white/30" placeholder="Type a message..." value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendMsg()} />
-                                            <button onClick={sendMsg} className="bg-gradient-to-r from-purple-600 to-pink-600 hover:from-purple-500 hover:to-pink-500 px-8 py-3 rounded-xl font-black text-xs uppercase tracking-widest shadow-lg transition transform hover:scale-105 active:scale-95">SEND</button>
-                                        </div>
+                                    <div className="p-6 flex gap-2">
+                                        <input className="flex-1 bg-white/5 border border-white/10 p-4 rounded-xl outline-none" value={text} placeholder="Type something..." onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendMsg()} />
+                                        <button onClick={sendMsg} className="bg-purple-600 px-8 rounded-xl font-black">SEND</button>
                                     </div>
                                 </div>
                             </div>
+                        )}
 
-                        ) : view === 'social' ? (
-                            <div className="p-10 max-w-4xl mx-auto w-full space-y-10 overflow-y-auto h-full">
-                                <h2 className="text-4xl font-black italic text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-blue-500 mb-8">Social Hub</h2>
+                        {view === 'social' && (
+                            <div className="p-10 max-w-4xl mx-auto w-full space-y-8">
+                                <h2 className="text-3xl font-black italic">Social Hub</h2>
+                                <div className="glass p-6 rounded-2xl flex gap-2">
+                                    <input className="flex-1 bg-black/50 p-4 rounded-xl outline-none" placeholder="Search username..." value={searchName} onChange={e => setSearchName(e.target.value)} />
+                                    <button onClick={handleAddFriend} className="bg-white text-black px-8 rounded-xl font-black">ADD FRIEND</button>
+                                </div>
                                 
-                                <div className="glass p-8 rounded-[2rem] shadow-2xl relative overflow-hidden">
-                                    <div className="absolute -top-20 -right-20 w-64 h-64 bg-purple-600/20 rounded-full blur-3xl"></div>
-                                    <h3 className="text-xl font-black mb-6 flex items-center gap-2">🔍 Discover Users</h3>
-                                    <div className="flex gap-3 relative z-10">
-                                        <input className="flex-1 bg-black/50 border border-white/10 focus:border-purple-500/50 transition p-5 rounded-2xl outline-none placeholder-white/30" placeholder="Enter precise username..." value={searchName} onChange={e => setSearchName(e.target.value)} />
-                                        <button onClick={handleAddFriend} className="bg-white text-black px-10 rounded-2xl font-black hover:bg-gray-200 transition">ADD</button>
-                                    </div>
+                                <div className="space-y-4">
+                                    <h3 className="font-bold opacity-50">FRIEND REQUESTS</h3>
+                                    {requests.map(r => (
+                                        <div key={r.id} className="glass p-4 rounded-xl flex justify-between items-center">
+                                            <span className="font-bold">{r.sender?.username}</span>
+                                            <button onClick={() => acceptFriend(r.id)} className="bg-green-500 px-6 py-2 rounded-lg font-black text-xs">ACCEPT</button>
+                                        </div>
+                                    ))}
                                 </div>
 
-                                <div className="space-y-6">
-                                    <h3 className="text-xl font-black flex items-center gap-2">🔔 Pending Requests</h3>
-                                    {requests.length === 0 ? <p className="text-white/40 italic">No pending requests right now.</p> : null}
-                                    {requests.map(r => (
-                                        <div key={r.id} className="glass p-5 rounded-2xl flex items-center justify-between shadow-lg hover:border-white/20 transition">
-                                            <div className="flex items-center gap-4">
-                                                <div className="w-12 h-12 bg-purple-600/30 rounded-full flex items-center justify-center text-xl">👤</div>
-                                                <span className="font-bold text-lg">{r.sender?.username || 'Unknown'}</span>
+                                <div className="space-y-4">
+                                    <h3 className="font-bold opacity-50">MY FRIENDS</h3>
+                                    {friends.map(f => (
+                                        <div key={f.id} className="glass p-4 rounded-xl flex justify-between items-center">
+                                            <div className="flex items-center gap-3">
+                                                <img src={f.avatar_url || 'https://via.placeholder.com/100'} className="w-10 h-10 rounded-full object-cover" />
+                                                <span className="font-bold">{f.username}</span>
                                             </div>
-                                            <button onClick={async () => {
-                                                await supabaseClient.from('friends').update({ status: 1 }).eq('id', r.id);
-                                                refreshSocial();
-                                            }} className="bg-gradient-to-r from-green-500 to-emerald-600 hover:from-green-400 hover:to-emerald-500 px-8 py-3 rounded-xl font-black text-xs tracking-widest shadow-lg transition transform hover:scale-105">ACCEPT</button>
+                                            <button onClick={() => { setView('chat'); setCurrentChat(f.id); setCurrentChatName(f.username); }} className="bg-purple-600 p-3 rounded-full hover:scale-110 transition">💬</button>
                                         </div>
                                     ))}
                                 </div>
                             </div>
+                        )}
 
-                        ) : (
-                            <div className="p-10 max-w-3xl mx-auto w-full space-y-8 overflow-y-auto h-full">
-                                <h2 className="text-4xl font-black italic text-transparent bg-clip-text bg-gradient-to-r from-gray-200 to-gray-500 mb-8">System Preferences</h2>
-                                
-                                <div className="glass p-10 rounded-[2rem] shadow-2xl space-y-8">
+                        {view === 'vibe' && (
+                            <div className="p-10 max-w-2xl mx-auto w-full space-y-10 text-center">
+                                <h2 className="text-4xl font-black italic text-purple-500">VIBRATION CONSOLE</h2>
+                                <div className="glass p-10 rounded-[3rem] space-y-8">
+                                    <div className="space-y-4">
+                                        <div className="flex justify-between font-bold"><span>Heavy Rumble</span><span>{Math.round(intensity.heavy * 100)}%</span></div>
+                                        <input type="range" min="0" max="1" step="0.1" className="w-full" value={intensity.heavy} onChange={e => setIntensity({...intensity, heavy: parseFloat(e.target.value)})} />
+                                    </div>
+                                    <div className="space-y-4">
+                                        <div className="flex justify-between font-bold"><span>Light Rumble</span><span>{Math.round(intensity.light * 100)}%</span></div>
+                                        <input type="range" min="0" max="1" step="0.1" className="w-full" value={intensity.light} onChange={e => setIntensity({...intensity, light: parseFloat(e.target.value)})} />
+                                    </div>
+                                    <div className="flex gap-4">
+                                        <button onClick={startLocalVibe} className="flex-1 bg-purple-600 py-5 rounded-2xl font-black shadow-lg">ACTIVATE PS4 RUMBLE</button>
+                                        <button onClick={() => clearInterval(vibeInterval.current)} className="flex-1 bg-red-600 py-5 rounded-2xl font-black">HALT</button>
+                                    </div>
+                                    <p className="text-xs opacity-40 font-bold uppercase tracking-widest">Connect Controller via Bluetooth & Press Any Button to Initialize</p>
+                                </div>
+                            </div>
+                        )}
+                        
+                        {view === 'settings' && (
+                             <div className="p-10 max-w-3xl mx-auto w-full space-y-8">
+                                <h2 className="text-4xl font-black italic">Settings</h2>
+                                <div className="glass p-10 rounded-[2rem] space-y-8">
                                     <div className="flex items-center gap-8 pb-8 border-b border-white/5">
-                                        <img src={profile?.avatar_url || 'https://via.placeholder.com/150'} className="w-24 h-24 rounded-2xl object-cover border-2 border-purple-500/50 shadow-lg" />
-                                        <div className="flex flex-col gap-3 flex-1">
-                                            <label className="text-xs font-black text-purple-400 uppercase tracking-widest">Profile Identity</label>
-                                            <label className="bg-white/5 hover:bg-white/10 border border-white/10 px-6 py-3 rounded-xl font-bold cursor-pointer transition text-center inline-block w-48">
-                                                Upload Avatar
-                                                <input type="file" className="hidden" onChange={async (e) => {
-                                                    const file = e.target.files[0];
-                                                    const path = `avatars/${session.user.id}.png`;
-                                                    await supabaseClient.storage.from('uploads').upload(path, file, { upsert: true });
-                                                    const { data: { publicUrl } } = supabaseClient.storage.from('uploads').getPublicUrl(path);
-                                                    await supabaseClient.from('profiles').update({ avatar_url: publicUrl }).eq('id', session.user.id);
-                                                    fetchProfile();
-                                                }} />
-                                            </label>
-                                        </div>
+                                        <img src={profile?.avatar_url || 'https://via.placeholder.com/150'} className="w-24 h-24 rounded-2xl object-cover border-2 border-purple-500" />
+                                        <button className="bg-white/10 px-6 py-3 rounded-xl font-bold">Change Avatar</button>
                                     </div>
-
-                                    <div className="flex flex-col gap-3">
-                                        <label className="text-xs font-black text-white/40 uppercase tracking-widest">Display Name</label>
-                                        <input className="bg-black/50 border border-white/10 focus:border-purple-500 p-5 rounded-2xl outline-none text-lg transition" value={profile?.username || ''} onChange={e => setProfile({...profile, username: e.target.value})} />
-                                    </div>
-                                    
-                                    <div className="pt-6 flex gap-4">
-                                        <button onClick={async () => {
-                                            const { error } = await supabaseClient.from('profiles').update({ username: profile.username }).eq('id', session.user.id);
-                                            if(error) alert("Error saving: " + error.message);
-                                            else alert("Profile Updated Successfully!");
-                                        }} className="flex-1 bg-white text-black py-5 rounded-2xl font-black tracking-widest hover:bg-gray-200 transition">SAVE CONFIGURATION</button>
-                                        
-                                        <button onClick={() => supabaseClient.auth.signOut()} className="bg-red-500/10 text-red-500 border border-red-500/20 hover:bg-red-500 hover:text-white px-8 py-5 rounded-2xl font-black tracking-widest transition">TERMINATE SESSION</button>
-                                    </div>
+                                    <button onClick={() => supabaseClient.auth.signOut()} className="w-full bg-red-600/20 text-red-500 p-5 rounded-2xl font-black tracking-widest border border-red-500/20">LOGOUT</button>
                                 </div>
                             </div>
                         )}
@@ -661,48 +301,25 @@
         function AuthUI() {
             const [mode, setMode] = useState('login');
             const [form, setForm] = useState({ email: '', password: '', username: '' });
-            const [loading, setLoading] = useState(false);
-
             const handleAction = async () => {
-                setLoading(true);
-                try {
-                    if (mode === 'signup') {
-                        const { data, error } = await supabaseClient.auth.signUp({ email: form.email, password: form.password });
-                        if (error) throw error;
-                        if (data.user) await supabaseClient.from('profiles').insert([{ id: data.user.id, username: form.username }]);
-                    } else {
-                        const { error } = await supabaseClient.auth.signInWithPassword({ email: form.email, password: form.password });
-                        if (error) throw error;
-                    }
-                } catch (e) {
-                    alert(e.message);
-                } finally {
-                    setLoading(false);
+                if (mode === 'signup') {
+                    const { data } = await supabaseClient.auth.signUp({ email: form.email, password: form.password });
+                    if (data.user) await supabaseClient.from('profiles').insert([{ id: data.user.id, username: form.username }]);
+                } else {
+                    await supabaseClient.auth.signInWithPassword({ email: form.email, password: form.password });
                 }
             };
 
             return (
-                <div className="h-screen flex items-center justify-center bg-[url('https://www.transparenttextures.com/patterns/cubes.png')] bg-black bg-blend-overlay">
-                    <div className="absolute w-96 h-96 bg-purple-600/30 rounded-full blur-[100px] top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2"></div>
-                    
-                    <div className="glass p-12 rounded-[3rem] w-full max-w-md shadow-2xl relative z-10 border border-white/10 text-center">
-                        <h1 className="text-5xl font-black text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-600 italic mb-2 tracking-tighter">K-D WORLD</h1>
-                        <p className="text-white/40 text-xs font-bold uppercase tracking-[0.3em] mb-12">Secure Access Node</p>
-                        
-                        <div className="space-y-5">
-                            {mode === 'signup' && (
-                                <input className="w-full bg-black/50 border border-white/10 focus:border-purple-500/50 p-5 rounded-2xl outline-none text-sm transition placeholder-white/30" placeholder="Choose a Username" onChange={e => setForm({...form, username: e.target.value})} />
-                            )}
-                            <input className="w-full bg-black/50 border border-white/10 focus:border-purple-500/50 p-5 rounded-2xl outline-none text-sm transition placeholder-white/30" placeholder="Email Address" onChange={e => setForm({...form, email: e.target.value})} />
-                            <input className="w-full bg-black/50 border border-white/10 focus:border-purple-500/50 p-5 rounded-2xl outline-none text-sm transition placeholder-white/30" type="password" placeholder="Password" onChange={e => setForm({...form, password: e.target.value})} />
-                            
-                            <button onClick={handleAction} disabled={loading} className="w-full bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 p-5 rounded-2xl font-black text-sm tracking-widest uppercase shadow-lg transition mt-4 disabled:opacity-50">
-                                {loading ? 'Processing...' : mode}
-                            </button>
-                            
-                            <p onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="text-center text-xs cursor-pointer mt-6 uppercase text-white/50 hover:text-white transition font-bold tracking-wider">
-                                Switch to {mode === 'login' ? 'Registration' : 'Authorization'}
-                            </p>
+                <div className="h-screen flex items-center justify-center bg-black">
+                    <div className="glass p-12 rounded-[3rem] w-full max-w-md text-center">
+                        <h1 className="text-4xl font-black text-purple-500 italic mb-8">K-D WORLD</h1>
+                        <div className="space-y-4">
+                            {mode === 'signup' && <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none" placeholder="Username" onChange={e => setForm({...form, username: e.target.value})} />}
+                            <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none" placeholder="Email" onChange={e => setForm({...form, email: e.target.value})} />
+                            <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none" type="password" placeholder="Password" onChange={e => setForm({...form, password: e.target.value})} />
+                            <button onClick={handleAction} className="w-full bg-purple-600 p-5 rounded-2xl font-black uppercase">{mode}</button>
+                            <p onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="cursor-pointer opacity-50 text-xs font-bold uppercase mt-4">Switch to {mode === 'login' ? 'Signup' : 'Login'}</p>
                         </div>
                     </div>
                 </div>
