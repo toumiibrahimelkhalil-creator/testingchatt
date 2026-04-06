@@ -27,10 +27,6 @@
             overflow: hidden; 
         }
 
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: transparent; }
-        ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 10px; }
-
         .glass { 
             background: var(--glass-bg); 
             backdrop-filter: blur(24px); 
@@ -42,11 +38,10 @@
             background: linear-gradient(90deg, rgba(213, 0, 249, 0.2) 0%, transparent 100%);
             border-left: 4px solid var(--primary); 
             color: #fff; 
-            text-shadow: 0 0 10px var(--primary-glow);
         }
 
         .nav-btn { 
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1); 
+            transition: all 0.3s; 
             border-radius: 0 12px 12px 0; 
             margin: 8px 0; 
             padding: 14px 20px; 
@@ -54,13 +49,6 @@
             color: rgba(255,255,255,0.6);
             border-left: 4px solid transparent;
         }
-        .nav-btn:hover:not(.active-tab) { background: rgba(255,255,255,0.03); color: #fff; }
-
-        .msg-bubble { transition: transform 0.2s; box-shadow: 0 4px 15px rgba(0,0,0,0.2); }
-        .msg-mine { background: linear-gradient(135deg, #8e24aa, #4a148c); border-radius: 18px 18px 2px 18px; }
-        .msg-theirs { background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); border-radius: 18px 18px 18px 2px; }
-        
-        input[type=range] { accent-color: var(--primary); cursor: pointer; height: 4px; background: rgba(255,255,255,0.1); border-radius: 4px; appearance: none; }
     </style>
 </head>
 <body>
@@ -81,12 +69,11 @@
             const [currentChatName, setCurrentChatName] = useState('Public Chamber');
             const [messages, setMessages] = useState([]);
             const [friends, setFriends] = useState([]);
-            const [requests, setRequests] = useState([]);
+            const [receivedRequests, setReceivedRequests] = useState([]);
             const [text, setText] = useState('');
             const [searchName, setSearchName] = useState('');
             const [intensity, setIntensity] = useState({ heavy: 1.0, light: 1.0 });
             const vibeInterval = useRef(null);
-            const chatEndRef = useRef(null);
 
             useEffect(() => {
                 supabaseClient.auth.getSession().then(({ data: { session } }) => setSession(session));
@@ -95,37 +82,34 @@
 
             useEffect(() => {
                 if (session) {
-                    fetchProfile();
                     refreshSocial();
-                    const dbChannel = supabaseClient.channel('sync')
+                    const sub = supabaseClient.channel('db-sync')
                         .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => fetchMessages())
                         .on('postgres_changes', { event: '*', schema: 'public', table: 'friends' }, () => refreshSocial())
                         .subscribe();
-                    return () => supabaseClient.removeChannel(dbChannel);
+                    return () => supabaseClient.removeChannel(sub);
                 }
             }, [session, currentChat]);
 
             useEffect(() => { fetchMessages(); }, [currentChat, session]);
-            useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
-
-            const fetchProfile = async () => {
-                const { data } = await supabaseClient.from('profiles').select('*').eq('id', session.user.id).single();
-                if (data) setProfile(data);
-            };
 
             const refreshSocial = async () => {
+                if (!session) return;
+                
+                // Get Accepted Friends
                 const { data: fList } = await supabaseClient.from('friends')
-                    .select('*, friend:profiles!friends_friend_id_fkey(*), sender:profiles!friends_user_id_fkey(*)')
+                    .select('*, sender:profiles!friends_user_id_fkey(*), receiver:profiles!friends_friend_id_fkey(*)')
                     .eq('status', 1)
                     .or(`user_id.eq.${session.user.id},friend_id.eq.${session.user.id}`);
                 
+                // Get Received Requests (Decide to Accept/Decline)
                 const { data: rList } = await supabaseClient.from('friends')
                     .select('*, sender:profiles!friends_user_id_fkey(*)')
                     .eq('friend_id', session.user.id)
                     .eq('status', 0);
                 
-                setFriends(fList?.map(f => f.user_id === session.user.id ? f.friend : f.sender).filter(Boolean) || []);
-                setRequests(rList || []);
+                setFriends(fList?.map(f => f.user_id === session.user.id ? f.receiver : f.sender).filter(Boolean) || []);
+                setReceivedRequests(rList || []);
             };
 
             const fetchMessages = async () => {
@@ -150,16 +134,16 @@
                 const { data: target } = await supabaseClient.from('profiles').select('id').ilike('username', searchName).single();
                 if (!target) return alert("User not found!");
                 const { error } = await supabaseClient.from('friends').insert([{ user_id: session.user.id, friend_id: target.id, status: 0 }]);
-                if (error) alert("Request already exists or already friends!");
-                else { alert("Request Sent!"); setSearchName(''); }
+                if (error) alert("Already requested!"); else { alert("Sent!"); setSearchName(''); refreshSocial(); }
             };
 
-            const acceptFriend = async (id) => {
-                await supabaseClient.from('friends').update({ status: 1 }).eq('id', id);
+            const respondRequest = async (id, accept) => {
+                if (accept) await supabaseClient.from('friends').update({ status: 1 }).eq('id', id);
+                else await supabaseClient.from('friends').delete().eq('id', id);
                 refreshSocial();
             };
 
-            const startLocalVibe = () => {
+            const startVibe = () => {
                 if (vibeInterval.current) clearInterval(vibeInterval.current);
                 vibeInterval.current = setInterval(() => {
                     const gps = navigator.getGamepads();
@@ -180,47 +164,38 @@
                     {/* SIDEBAR */}
                     <div className="w-20 lg:w-72 glass flex flex-col py-8 z-10 border-r border-white/5">
                         <div className="px-8 mb-12 hidden lg:block text-2xl font-black italic text-purple-500">K-D WORLD</div>
-                        <div className="flex-1 flex flex-col gap-2">
-                            <button onClick={() => setView('chat')} className={`nav-btn flex items-center gap-4 ${view === 'chat' ? 'active-tab' : ''}`}>
-                                <span>💬</span> <span className="hidden lg:inline font-bold">Chambers</span>
-                            </button>
-                            <button onClick={() => setView('social')} className={`nav-btn flex items-center gap-4 ${view === 'social' ? 'active-tab' : ''}`}>
-                                <span>👥</span> <span className="hidden lg:inline font-bold">Social Hub</span>
-                            </button>
-                            <button onClick={() => setView('vibe')} className={`nav-btn flex items-center gap-4 ${view === 'vibe' ? 'active-tab' : ''}`}>
-                                <span>🎮</span> <span className="hidden lg:inline font-bold">Vibration Console</span>
-                            </button>
-                            <button onClick={() => setView('settings')} className={`nav-btn flex items-center gap-4 ${view === 'settings' ? 'active-tab' : ''}`}>
-                                <span>⚙️</span> <span className="hidden lg:inline font-bold">Preferences</span>
-                            </button>
-                        </div>
+                        <nav className="flex-1 flex flex-col gap-2">
+                            <button onClick={() => setView('chat')} className={`nav-btn flex items-center gap-4 ${view === 'chat' ? 'active-tab' : ''}`}><span>💬</span> <span className="hidden lg:inline font-bold">Chambers</span></button>
+                            <button onClick={() => setView('social')} className={`nav-btn flex items-center gap-4 ${view === 'social' ? 'active-tab' : ''}`}><span>👥</span> <span className="hidden lg:inline font-bold">Social Hub</span></button>
+                            <button onClick={() => setView('vibe')} className={`nav-btn flex items-center gap-4 ${view === 'vibe' ? 'active-tab' : ''}`}><span>🎮</span> <span className="hidden lg:inline font-bold">Vibration Console</span></button>
+                        </nav>
+                        <button onClick={() => supabaseClient.auth.signOut()} className="m-6 bg-red-600/10 text-red-500 p-4 rounded-xl font-black text-xs uppercase">Logout</button>
                     </div>
 
-                    {/* MAIN CONTENT */}
+                    {/* MAIN */}
                     <div className="flex-1 flex flex-col bg-black/40">
                         {view === 'chat' && (
-                            <div className="flex flex-1 overflow-hidden">
-                                <div className="w-72 border-r border-white/5 bg-white/5 p-4 space-y-4">
+                            <div className="flex h-full overflow-hidden">
+                                <div className="w-64 border-r border-white/5 p-4 space-y-2">
                                     <button onClick={() => {setCurrentChat('public'); setCurrentChatName('Public Chamber');}} className={`w-full p-4 rounded-xl text-left font-bold ${currentChat === 'public' ? 'bg-purple-600' : 'hover:bg-white/5'}`}>🌐 Public Chamber</button>
-                                    <h3 className="text-xs font-black opacity-30 uppercase px-4">Direct Messages</h3>
+                                    <p className="text-[10px] font-black opacity-20 uppercase px-4 pt-4">Direct Friends</p>
                                     {friends.map(f => (
                                         <button key={f.id} onClick={() => {setCurrentChat(f.id); setCurrentChatName(f.username);}} className={`w-full p-3 rounded-xl flex items-center gap-3 font-bold ${currentChat === f.id ? 'bg-white/10' : ''}`}>
-                                            <img src={f.avatar_url || 'https://via.placeholder.com/100'} className="w-8 h-8 rounded-full object-cover" /> {f.username}
+                                            <img src={f.avatar_url || 'https://via.placeholder.com/50'} className="w-8 h-8 rounded-full object-cover" /> {f.username}
                                         </button>
                                     ))}
                                 </div>
                                 <div className="flex-1 flex flex-col">
-                                    <header className="p-6 border-b border-white/5 font-black text-xl">{currentChatName}</header>
+                                    <header className="p-6 border-b border-white/5 font-black text-xl italic">{currentChatName}</header>
                                     <div className="flex-1 p-6 overflow-y-auto space-y-4">
-                                        {messages.map((msg, i) => (
-                                            <div key={i} className={`flex ${msg.sender_id === session.user.id ? 'justify-end' : 'justify-start'}`}>
-                                                <div className={`p-4 rounded-2xl max-w-md msg-bubble ${msg.sender_id === session.user.id ? 'msg-mine' : 'msg-theirs'}`}>{msg.content}</div>
+                                        {messages.map((m, i) => (
+                                            <div key={i} className={`flex ${m.sender_id === session.user.id ? 'justify-end' : 'justify-start'}`}>
+                                                <div className={`p-4 rounded-2xl max-w-sm ${m.sender_id === session.user.id ? 'bg-purple-600 font-bold' : 'bg-white/5 border border-white/10'}`}>{m.content}</div>
                                             </div>
                                         ))}
-                                        <div ref={chatEndRef} />
                                     </div>
                                     <div className="p-6 flex gap-2">
-                                        <input className="flex-1 bg-white/5 border border-white/10 p-4 rounded-xl outline-none" value={text} placeholder="Type something..." onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendMsg()} />
+                                        <input className="flex-1 bg-white/5 border border-white/10 p-4 rounded-xl outline-none" value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendMsg()} />
                                         <button onClick={sendMsg} className="bg-purple-600 px-8 rounded-xl font-black">SEND</button>
                                     </div>
                                 </div>
@@ -228,68 +203,51 @@
                         )}
 
                         {view === 'social' && (
-                            <div className="p-10 max-w-4xl mx-auto w-full space-y-8">
-                                <h2 className="text-3xl font-black italic">Social Hub</h2>
-                                <div className="glass p-6 rounded-2xl flex gap-2">
-                                    <input className="flex-1 bg-black/50 p-4 rounded-xl outline-none" placeholder="Search username..." value={searchName} onChange={e => setSearchName(e.target.value)} />
-                                    <button onClick={handleAddFriend} className="bg-white text-black px-8 rounded-xl font-black">ADD FRIEND</button>
-                                </div>
-                                
-                                <div className="space-y-4">
-                                    <h3 className="font-bold opacity-50">FRIEND REQUESTS</h3>
-                                    {requests.map(r => (
-                                        <div key={r.id} className="glass p-4 rounded-xl flex justify-between items-center">
-                                            <span className="font-bold">{r.sender?.username}</span>
-                                            <button onClick={() => acceptFriend(r.id)} className="bg-green-500 px-6 py-2 rounded-lg font-black text-xs">ACCEPT</button>
-                                        </div>
-                                    ))}
+                            <div className="p-12 max-w-4xl mx-auto w-full space-y-10">
+                                <h2 className="text-4xl font-black italic">Social Hub</h2>
+                                <div className="glass p-6 rounded-2xl flex gap-3">
+                                    <input className="flex-1 bg-black/40 p-4 rounded-xl outline-none" placeholder="Find user..." value={searchName} onChange={e => setSearchName(e.target.value)} />
+                                    <button onClick={handleAddFriend} className="bg-white text-black px-10 rounded-xl font-black">ADD</button>
                                 </div>
 
-                                <div className="space-y-4">
-                                    <h3 className="font-bold opacity-50">MY FRIENDS</h3>
-                                    {friends.map(f => (
-                                        <div key={f.id} className="glass p-4 rounded-xl flex justify-between items-center">
-                                            <div className="flex items-center gap-3">
-                                                <img src={f.avatar_url || 'https://via.placeholder.com/100'} className="w-10 h-10 rounded-full object-cover" />
-                                                <span className="font-bold">{f.username}</span>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
+                                    <section className="space-y-4">
+                                        <h3 className="text-xs font-black opacity-30 uppercase tracking-widest">Received Requests</h3>
+                                        {receivedRequests.map(r => (
+                                            <div key={r.id} className="glass p-4 rounded-xl flex justify-between items-center">
+                                                <span className="font-bold">{r.sender?.username}</span>
+                                                <div className="flex gap-2">
+                                                    <button onClick={() => respondRequest(r.id, true)} className="bg-green-500 px-4 py-2 rounded-lg font-bold text-[10px]">ACCEPT</button>
+                                                    <button onClick={() => respondRequest(r.id, false)} className="bg-red-500/20 text-red-500 px-4 py-2 rounded-lg font-bold text-[10px]">DECLINE</button>
+                                                </div>
                                             </div>
-                                            <button onClick={() => { setView('chat'); setCurrentChat(f.id); setCurrentChatName(f.username); }} className="bg-purple-600 p-3 rounded-full hover:scale-110 transition">💬</button>
-                                        </div>
-                                    ))}
+                                        ))}
+                                    </section>
+                                    <section className="space-y-4">
+                                        <h3 className="text-xs font-black opacity-30 uppercase tracking-widest">My Friends</h3>
+                                        {friends.map(f => (
+                                            <div key={f.id} className="glass p-4 rounded-xl flex justify-between items-center">
+                                                <div className="flex items-center gap-3">
+                                                    <img src={f.avatar_url || 'https://via.placeholder.com/50'} className="w-10 h-10 rounded-full object-cover" />
+                                                    <span className="font-bold">{f.username}</span>
+                                                </div>
+                                                <button onClick={() => {setView('chat'); setCurrentChat(f.id); setCurrentChatName(f.username);}} className="bg-purple-600 p-2 rounded-lg">💬</button>
+                                            </div>
+                                        ))}
+                                    </section>
                                 </div>
                             </div>
                         )}
 
                         {view === 'vibe' && (
-                            <div className="p-10 max-w-2xl mx-auto w-full space-y-10 text-center">
-                                <h2 className="text-4xl font-black italic text-purple-500">VIBRATION CONSOLE</h2>
-                                <div className="glass p-10 rounded-[3rem] space-y-8">
-                                    <div className="space-y-4">
-                                        <div className="flex justify-between font-bold"><span>Heavy Rumble</span><span>{Math.round(intensity.heavy * 100)}%</span></div>
-                                        <input type="range" min="0" max="1" step="0.1" className="w-full" value={intensity.heavy} onChange={e => setIntensity({...intensity, heavy: parseFloat(e.target.value)})} />
-                                    </div>
-                                    <div className="space-y-4">
-                                        <div className="flex justify-between font-bold"><span>Light Rumble</span><span>{Math.round(intensity.light * 100)}%</span></div>
-                                        <input type="range" min="0" max="1" step="0.1" className="w-full" value={intensity.light} onChange={e => setIntensity({...intensity, light: parseFloat(e.target.value)})} />
-                                    </div>
+                            <div className="flex-1 flex items-center justify-center p-12">
+                                <div className="glass p-12 rounded-[3rem] w-full max-w-xl text-center space-y-8">
+                                    <h2 className="text-4xl font-black italic text-purple-500">VIBRATION CONSOLE</h2>
+                                    <input type="range" min="0" max="1" step="0.1" className="w-full" value={intensity.heavy} onChange={e => setIntensity({...intensity, heavy: parseFloat(e.target.value)})} />
                                     <div className="flex gap-4">
-                                        <button onClick={startLocalVibe} className="flex-1 bg-purple-600 py-5 rounded-2xl font-black shadow-lg">ACTIVATE PS4 RUMBLE</button>
-                                        <button onClick={() => clearInterval(vibeInterval.current)} className="flex-1 bg-red-600 py-5 rounded-2xl font-black">HALT</button>
+                                        <button onClick={startVibe} className="flex-1 bg-purple-600 py-6 rounded-2xl font-black">ACTIVATE</button>
+                                        <button onClick={() => clearInterval(vibeInterval.current)} className="flex-1 bg-white/5 py-6 rounded-2xl font-black">STOP</button>
                                     </div>
-                                    <p className="text-xs opacity-40 font-bold uppercase tracking-widest">Connect Controller via Bluetooth & Press Any Button to Initialize</p>
-                                </div>
-                            </div>
-                        )}
-                        
-                        {view === 'settings' && (
-                             <div className="p-10 max-w-3xl mx-auto w-full space-y-8">
-                                <h2 className="text-4xl font-black italic">Settings</h2>
-                                <div className="glass p-10 rounded-[2rem] space-y-8">
-                                    <div className="flex items-center gap-8 pb-8 border-b border-white/5">
-                                        <img src={profile?.avatar_url || 'https://via.placeholder.com/150'} className="w-24 h-24 rounded-2xl object-cover border-2 border-purple-500" />
-                                        <button className="bg-white/10 px-6 py-3 rounded-xl font-bold">Change Avatar</button>
-                                    </div>
-                                    <button onClick={() => supabaseClient.auth.signOut()} className="w-full bg-red-600/20 text-red-500 p-5 rounded-2xl font-black tracking-widest border border-red-500/20">LOGOUT</button>
                                 </div>
                             </div>
                         )}
@@ -309,17 +267,16 @@
                     await supabaseClient.auth.signInWithPassword({ email: form.email, password: form.password });
                 }
             };
-
             return (
                 <div className="h-screen flex items-center justify-center bg-black">
-                    <div className="glass p-12 rounded-[3rem] w-full max-w-md text-center">
-                        <h1 className="text-4xl font-black text-purple-500 italic mb-8">K-D WORLD</h1>
+                    <div className="glass p-12 rounded-[3rem] w-full max-w-md text-center space-y-6">
+                        <h1 className="text-4xl font-black text-purple-500 italic">K-D WORLD</h1>
                         <div className="space-y-4">
                             {mode === 'signup' && <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none" placeholder="Username" onChange={e => setForm({...form, username: e.target.value})} />}
                             <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none" placeholder="Email" onChange={e => setForm({...form, email: e.target.value})} />
                             <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none" type="password" placeholder="Password" onChange={e => setForm({...form, password: e.target.value})} />
-                            <button onClick={handleAction} className="w-full bg-purple-600 p-5 rounded-2xl font-black uppercase">{mode}</button>
-                            <p onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="cursor-pointer opacity-50 text-xs font-bold uppercase mt-4">Switch to {mode === 'login' ? 'Signup' : 'Login'}</p>
+                            <button onClick={handleAction} className="w-full bg-purple-600 p-5 rounded-2xl font-black uppercase tracking-widest">{mode}</button>
+                            <p onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="cursor-pointer opacity-50 text-[10px] font-bold uppercase tracking-widest mt-4">Switch to {mode === 'login' ? 'Signup' : 'Login'}</p>
                         </div>
                     </div>
                 </div>
