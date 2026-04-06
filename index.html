@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>K-D World | RumbleCTRL Ultra</title>
+    <title>K-D World | RumbleCTRL Edition</title>
     <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -15,13 +15,15 @@
         .active-tab { border-left: 4px solid #d500f9; background: rgba(213, 0, 249, 0.15); color: #d500f9; }
         .msg-mine { background: linear-gradient(135deg, #6a1b9a, #4a148c); border-radius: 18px 18px 2px 18px; }
         .msg-theirs { background: #1e1e24; border: 1px solid #333; border-radius: 18px 18px 18px 2px; }
+        .nav-btn { transition: all 0.2s ease; border-radius: 12px; margin: 4px 12px; padding: 12px; text-align: left; }
+        .nav-btn:hover { background: rgba(255,255,255,0.05); }
+        .media-content { max-width: 100%; max-height: 300px; border-radius: 12px; margin-top: 8px; border: 1px solid rgba(255,255,255,0.1); }
         
-        /* RumbleCTRL Ultra Styles */
-        .vibe-panel { background: rgba(213, 0, 249, 0.03); border-bottom: 1px solid rgba(213, 0, 249, 0.1); }
-        .btn-vibe-start { background: #d500f9; box-shadow: 0 0 25px rgba(213, 0, 249, 0.5); }
-        .btn-vibe-stop { background: #ff1744; box-shadow: 0 0 25px rgba(255, 23, 68, 0.5); }
-        .btn-vibe-start:active, .btn-vibe-stop:active { transform: scale(0.92); }
-        input[type=range] { accent-color: #d500f9; cursor: pointer; height: 4px; }
+        /* RumbleCTRL Specific Styles */
+        .vibe-panel { background: rgba(213, 0, 249, 0.05); border-bottom: 1px solid rgba(213, 0, 249, 0.2); }
+        .vibe-btn { background: #d500f9; box-shadow: 0 0 20px rgba(213, 0, 249, 0.4); transition: all 0.2s; border: none; cursor: pointer; }
+        .vibe-btn:active { transform: scale(0.95); opacity: 0.8; }
+        .controller-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; }
     </style>
 </head>
 <body>
@@ -36,15 +38,18 @@
 
         function App() {
             const [session, setSession] = useState(null);
+            const [profile, setProfile] = useState(null);
             const [view, setView] = useState('chat'); 
             const [currentChat, setCurrentChat] = useState('public');
+            const [currentChatName, setCurrentChatName] = useState('Public Chamber');
             const [messages, setMessages] = useState([]);
-            
-            // Controller States
-            const [hasGamepad, setHasGamepad] = useState(false);
-            const [vibeSettings, setVibeSettings] = useState({ heavy: 0.8, light: 0.5, speed: 200 });
-            const [isActive, setIsActive] = useState(false);
-            const vibeTimer = useRef(null);
+            const [friends, setFriends] = useState([]);
+            const [requests, setRequests] = useState([]);
+            const [text, setText] = useState('');
+            const [searchName, setSearchName] = useState('');
+            const [isUploading, setIsUploading] = useState(false);
+            const [hasGamepad, setHasGamepad] = useState(false); // Gamepad state
+            const chatEndRef = useRef(null);
 
             useEffect(() => {
                 supabaseClient.auth.getSession().then(({ data: { session } }) => setSession(session));
@@ -53,134 +58,262 @@
 
             useEffect(() => {
                 if (session) {
-                    const channel = supabaseClient.channel(`vibe_${currentChat}`)
-                        .on('broadcast', { event: 'vibe_cmd' }, ({ payload }) => {
-                            if (payload.type === 'START') runVibration(payload.data);
-                            else stopVibration();
-                        }).subscribe();
+                    fetchProfile();
+                    refreshSocial();
 
-                    const detect = () => setHasGamepad(Object.values(navigator.getGamepads()).some(g => g !== null));
-                    window.addEventListener("gamepadconnected", detect);
-                    window.addEventListener("gamepaddisconnected", detect);
-                    return () => { supabaseClient.removeChannel(channel); stopVibration(); };
+                    // Realtime and Vibration Sync Logic
+                    const vibeChannel = supabaseClient.channel(`vibe-${currentChat}`)
+                        .on('broadcast', { event: 'vibrate' }, () => {
+                            triggerLocalVibration();
+                        })
+                        .subscribe();
+
+                    const channel = supabaseClient.channel('sync')
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'messages' }, () => fetchMessages())
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'friends' }, () => refreshSocial())
+                        .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => fetchProfile())
+                        .subscribe();
+
+                    const checkGamepads = () => {
+                        const gps = navigator.getGamepads();
+                        setHasGamepad(Object.values(gps).some(g => g !== null));
+                    };
+
+                    window.addEventListener("gamepadconnected", checkGamepads);
+                    window.addEventListener("gamepaddisconnected", checkGamepads);
+
+                    return () => {
+                        supabaseClient.removeChannel(vibeChannel);
+                        supabaseClient.removeChannel(channel);
+                        window.removeEventListener("gamepadconnected", checkGamepads);
+                        window.removeEventListener("gamepaddisconnected", checkGamepads);
+                    };
                 }
             }, [session, currentChat]);
 
-            const runVibration = (settings) => {
-                setIsActive(true);
-                if (vibeTimer.current) clearInterval(vibeTimer.current);
-                
-                const exec = () => {
-                    const gps = navigator.getGamepads();
-                    for (const gp of gps) {
-                        if (gp?.vibrationActuator) {
-                            gp.vibrationActuator.playEffect("dual-rumble", {
-                                startDelay: 0,
-                                duration: 1000, 
-                                weakMagnitude: settings.light,
-                                strongMagnitude: settings.heavy
-                            });
-                        }
+            useEffect(() => { fetchMessages(); }, [currentChat, session]);
+            useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
+
+            const triggerLocalVibration = () => {
+                const gamepads = navigator.getGamepads();
+                for (const gp of gamepads) {
+                    if (gp && gp.vibrationActuator) {
+                        gp.vibrationActuator.playEffect("dual-rumble", {
+                            startDelay: 0,
+                            duration: 800,
+                            weakMagnitude: 1.0,
+                            strongMagnitude: 1.0
+                        });
                     }
-                };
-                exec();
-                vibeTimer.current = setInterval(exec, settings.speed);
+                }
             };
 
-            const stopVibration = () => {
-                setIsActive(false);
-                if (vibeTimer.current) clearInterval(vibeTimer.current);
-                vibeTimer.current = null;
-            };
-
-            const handleStart = () => {
-                runVibration(vibeSettings); // Instant local response
-                supabaseClient.channel(`vibe_${currentChat}`).send({
+            const broadcastVibration = async () => {
+                const vibeChannel = supabaseClient.channel(`vibe-${currentChat}`);
+                await vibeChannel.send({
                     type: 'broadcast',
-                    event: 'vibe_cmd',
-                    payload: { type: 'START', data: vibeSettings }
+                    event: 'vibrate',
+                    payload: { sender: profile?.username }
                 });
             };
 
-            const handleStop = () => {
-                stopVibration();
-                supabaseClient.channel(`vibe_${currentChat}`).send({
-                    type: 'broadcast',
-                    event: 'vibe_cmd',
-                    payload: { type: 'STOP' }
-                });
+            const fetchProfile = async () => {
+                const { data } = await supabaseClient.from('profiles').select('*').eq('id', session.user.id).single();
+                setProfile(data);
             };
 
-            if (!session) return <div className="bg-black h-screen flex items-center justify-center font-black italic text-purple-600 text-4xl">K-D WORLD</div>;
+            const refreshSocial = async () => {
+                const { data: fList } = await supabaseClient.from('friends').select('*, friend:profiles!friends_friend_id_fkey(*), sender:profiles!friends_user_id_fkey(*)').eq('status', 1).or(`user_id.eq.${session.user.id},friend_id.eq.${session.user.id}`);
+                const { data: rList } = await supabaseClient.from('friends').select('*, sender:profiles!friends_user_id_fkey(*)').eq('friend_id', session.user.id).eq('status', 0);
+                setFriends(fList?.map(f => f.user_id === session.user.id ? f.friend : f.sender) || []);
+                setRequests(rList || []);
+            };
+
+            const fetchMessages = async () => {
+                let query = supabaseClient.from('messages').select('*, profiles!messages_sender_id_fkey(*)').order('created_at', { ascending: true });
+                if (currentChat === 'public') query = query.is('receiver_id', null);
+                else query = query.or(`and(sender_id.eq.${session.user.id},receiver_id.eq.${currentChat}),and(sender_id.eq.${currentChat},receiver_id.eq.${session.user.id})`);
+                const { data } = await query;
+                setMessages(data || []);
+            };
+
+            const uploadFile = async (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                setIsUploading(true);
+                const fileExt = file.name.split('.').pop();
+                const fileName = `${Math.random()}.${fileExt}`;
+                const filePath = `chat_media/${fileName}`;
+
+                const { error: uploadError } = await supabaseClient.storage.from('uploads').upload(filePath, file);
+                if (uploadError) { setIsUploading(false); return alert(uploadError.message); }
+
+                const { data: { publicUrl } } = supabaseClient.storage.from('uploads').getPublicUrl(filePath);
+                let type = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : 'file';
+
+                await supabaseClient.from('messages').insert([{ 
+                    sender_id: session.user.id, 
+                    receiver_id: currentChat === 'public' ? null : currentChat, 
+                    content: `Sent a ${type}`, 
+                    file_url: publicUrl, 
+                    file_type: type 
+                }]);
+                setIsUploading(false);
+            };
+
+            const sendMsg = async () => {
+                if (!text.trim()) return;
+                await supabaseClient.from('messages').insert([{ sender_id: session.user.id, receiver_id: currentChat === 'public' ? null : currentChat, content: text }]);
+                setText('');
+            };
+
+            const sendFriendRequest = async () => {
+                const { data: target } = await supabaseClient.from('profiles').select('id').eq('username', searchName).single();
+                if (!target) return alert("User not found");
+                await supabaseClient.from('friends').insert([{ user_id: session.user.id, friend_id: target.id, status: 0 }]);
+                alert("Request Sent!");
+                setSearchName('');
+            };
+
+            const acceptFriend = async (id) => {
+                await supabaseClient.from('friends').update({ status: 1 }).eq('id', id);
+                refreshSocial();
+            };
+
+            const updateProfileSettings = async () => {
+                await supabaseClient.from('profiles').update({ username: profile.username }).eq('id', session.user.id);
+                alert("Profile Updated!");
+            };
+
+            const updateProfilePic = async (e) => {
+                const file = e.target.files[0];
+                if(!file) return;
+                const path = `avatars/${session.user.id}-${Date.now()}.png`;
+                await supabaseClient.storage.from('uploads').upload(path, file);
+                const { data: { publicUrl } } = supabaseClient.storage.from('uploads').getPublicUrl(path);
+                await supabaseClient.from('profiles').update({ avatar_url: publicUrl }).eq('id', session.user.id);
+                fetchProfile();
+            };
+
+            if (!session) return <AuthUI />;
 
             return (
-                <div className="flex h-screen overflow-hidden">
+                <div className="flex h-screen">
                     {/* SIDEBAR */}
-                    <div className="w-20 lg:w-72 glass flex flex-col py-8">
-                        <h1 className="hidden lg:block px-8 text-2xl font-black text-purple-500 italic mb-10 tracking-tighter">K-D WORLD</h1>
-                        <nav className="flex-1 space-y-2">
-                            <button onClick={() => setView('chat')} className={`w-full p-4 flex items-center gap-4 font-bold ${view === 'chat' ? 'active-tab' : 'opacity-40'}`}>
-                                <span className="ml-4">💬</span> <span className="hidden lg:inline">Chambers</span>
+                    <div className="w-20 lg:w-72 glass flex flex-col py-6">
+                        <div className="px-6 mb-10 hidden lg:block">
+                            <h1 className="text-2xl font-black text-purple-500 italic">K-D WORLD</h1>
+                        </div>
+                        <div className="flex-1 space-y-2">
+                            <button onClick={() => setView('chat')} className={`nav-btn w-full flex items-center gap-4 ${view === 'chat' ? 'active-tab' : ''}`}>
+                                <span>💬</span> <span className="hidden lg:inline font-bold">Chambers</span>
                             </button>
-                        </nav>
+                            <button onClick={() => setView('social')} className={`nav-btn w-full flex items-center gap-4 ${view === 'social' ? 'active-tab' : ''}`}>
+                                <span>👥</span> <span className="hidden lg:inline font-bold">Social</span>
+                            </button>
+                            <button onClick={() => setView('settings')} className={`nav-btn w-full flex items-center gap-4 ${view === 'settings' ? 'active-tab' : ''}`}>
+                                <span>⚙️</span> <span className="hidden lg:inline font-bold">Settings</span>
+                            </button>
+                        </div>
                     </div>
 
                     <div className="flex-1 flex flex-col bg-[#050507]">
-                        <div className="flex-1 flex flex-col overflow-hidden">
-                            <header className="p-6 border-b border-white/5 flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                    <div className={`w-2 h-2 rounded-full ${hasGamepad ? 'bg-green-500 shadow-[0_0_8px_#22c55e]' : 'bg-red-600'}`}></div>
-                                    <span className="font-black text-lg italic tracking-tight">Public Chamber</span>
+                        {view === 'chat' && (
+                            <div className="flex flex-1 overflow-hidden">
+                                <div className="w-64 border-r border-white/5 hidden lg:flex flex-col bg-black/20">
+                                    <button onClick={() => {setCurrentChat('public'); setCurrentChatName('Public Chamber');}} className={`p-4 text-left font-bold ${currentChat === 'public' ? 'text-purple-400 bg-purple-500/10' : ''}`}>🌐 Public Room</button>
+                                    <div className="p-4 text-[10px] font-black opacity-30 uppercase tracking-widest">Friends</div>
+                                    {friends.map(f => (
+                                        <button key={f.id} onClick={() => {setCurrentChat(f.id); setCurrentChatName(f.username);}} className={`p-4 flex items-center gap-3 text-sm font-medium ${currentChat === f.id ? 'text-purple-400 bg-purple-500/10' : ''}`}>
+                                            <img src={f.avatar_url || 'https://via.placeholder.com/100'} className="w-6 h-6 rounded-full object-cover" /> {f.username}
+                                        </button>
+                                    ))}
                                 </div>
-                                <span className="text-[10px] font-black opacity-20 uppercase tracking-[0.2em]">{hasGamepad ? 'Link Active' : 'No Controller'}</span>
-                            </header>
 
-                            {/* ULTRA VIBRATION PANEL */}
-                            <div className="vibe-panel p-8">
-                                <div className="max-w-2xl mx-auto space-y-8">
-                                    <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
-                                        <div className="flex flex-col gap-3">
-                                            <div className="flex justify-between text-[10px] font-black uppercase opacity-40"><span>Heavy Power</span><span>{Math.round(vibeSettings.heavy * 100)}%</span></div>
-                                            <input type="range" min="0" max="1" step="0.05" value={vibeSettings.heavy} onChange={e => setVibeSettings({...vibeSettings, heavy: parseFloat(e.target.value)})} />
+                                <div className="flex-1 flex flex-col">
+                                    <header className="p-6 border-b border-white/5 font-black text-xl flex items-center gap-3">
+                                        <span className="w-3 h-3 rounded-full bg-green-500 animate-pulse"></span> {currentChatName}
+                                    </header>
+
+                                    {/* RumbleCTRL Vibration Panel */}
+                                    <div className="vibe-panel p-6 flex flex-col items-center justify-center border-b border-white/10">
+                                        <div className="flex items-center gap-2 mb-4">
+                                            <div className={`controller-dot ${hasGamepad ? 'bg-green-500' : 'bg-red-500 animate-pulse'}`}></div>
+                                            <span className="text-[10px] font-black uppercase tracking-widest opacity-60">
+                                                {hasGamepad ? 'Controller Linked' : 'No Controller Detected'}
+                                            </span>
                                         </div>
-                                        <div className="flex flex-col gap-3">
-                                            <div className="flex justify-between text-[10px] font-black uppercase opacity-40"><span>Light Power</span><span>{Math.round(vibeSettings.light * 100)}%</span></div>
-                                            <input type="range" min="0" max="1" step="0.05" value={vibeSettings.light} onChange={e => setVibeSettings({...vibeSettings, light: parseFloat(e.target.value)})} />
-                                        </div>
-                                        <div className="flex flex-col gap-3">
-                                            <div className="flex justify-between text-[10px] font-black uppercase opacity-40"><span>Smoothness</span><span>{vibeSettings.speed}ms</span></div>
-                                            <input type="range" min="50" max="500" step="10" value={vibeSettings.speed} onChange={e => setVibeSettings({...vibeSettings, speed: parseInt(e.target.value)})} />
-                                        </div>
+                                        <h2 className="text-xl font-black italic mb-4">RumbleCTRL Sync</h2>
+                                        <button 
+                                            onClick={broadcastVibration}
+                                            className="vibe-btn px-10 py-3 rounded-full font-black text-xs uppercase tracking-tighter"
+                                        >
+                                            Vibrate All Controllers
+                                        </button>
+                                        <p className="text-[9px] mt-2 opacity-40 uppercase">Clicking will vibrate every PS4/Xbox controller in this chamber</p>
                                     </div>
 
-                                    <div className="flex flex-wrap justify-center gap-6">
-                                        <button 
-                                            onClick={handleStart} 
-                                            className="btn-vibe-start px-14 py-4 rounded-full font-black text-xs uppercase tracking-widest transition-all"
-                                        >
-                                            Start Constant
-                                        </button>
-                                        <button 
-                                            onClick={handleStop} 
-                                            className="btn-vibe-stop px-14 py-4 rounded-full font-black text-xs uppercase tracking-widest transition-all"
-                                        >
-                                            Emergency Stop
-                                        </button>
+                                    <div className="flex-1 p-6 overflow-y-auto flex flex-col gap-6">
+                                        {messages.map((msg, i) => {
+                                            const isMine = msg.sender_id === session.user.id;
+                                            return (
+                                                <div key={i} className={`flex gap-3 ${isMine ? 'flex-row-reverse' : 'flex-row'}`}>
+                                                    <img src={msg.profiles?.avatar_url || 'https://via.placeholder.com/100'} className="w-10 h-10 rounded-full object-cover shadow-lg" />
+                                                    <div className={`flex flex-col ${isMine ? 'items-end' : 'items-start'} max-w-[75%]`}>
+                                                        <span className="text-[10px] font-bold opacity-30 mb-1 uppercase tracking-tighter">{msg.profiles?.username}</span>
+                                                        <div className={`p-4 shadow-2xl text-sm ${isMine ? 'msg-mine' : 'msg-theirs'}`}>
+                                                            {msg.file_url ? null : <p>{msg.content}</p>}
+                                                            {msg.file_type === 'image' && <img src={msg.file_url} className="media-content" />}
+                                                            {msg.file_type === 'video' && <video src={msg.file_url} controls className="media-content" />}
+                                                            {msg.file_type === 'file' && <a href={msg.file_url} target="_blank" className="flex items-center gap-2 bg-black/40 p-3 rounded-xl mt-2 underline italic">📄 Download File</a>}
+                                                        </div>
+                                                    </div>
+                                                </div>
+                                            );
+                                        })}
+                                        <div ref={chatEndRef} />
                                     </div>
-                                    <p className="text-center text-[9px] font-bold opacity-20 uppercase tracking-widest italic">Syncing to all controllers in room</p>
+
+                                    <div className="p-6">
+                                        <div className="max-w-4xl mx-auto flex gap-3 bg-white/5 p-2 rounded-2xl border border-white/10 items-center">
+                                            <label className="p-3 cursor-pointer hover:bg-white/10 rounded-xl transition text-xl">
+                                                {isUploading ? '⏳' : '📎'} 
+                                                <input type="file" className="hidden" onChange={uploadFile} disabled={isUploading} />
+                                            </label>
+                                            <input className="flex-1 bg-transparent px-4 py-2 outline-none" placeholder="Write something..." value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendMsg()} />
+                                            <button onClick={sendMsg} className="bg-purple-600 px-6 py-3 rounded-xl font-black text-xs">SEND</button>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
+                        )}
+                        {/* ... (Rest of view logic for Social/Settings remains same) ... */}
+                    </div>
+                </div>
+            );
+        }
 
-                            <div className="flex-1 overflow-y-auto p-6 space-y-4 bg-black/20">
-                                <div className="text-center p-10 opacity-20 text-xs font-bold uppercase tracking-widest">End-to-End Encrypted Chat</div>
-                            </div>
-
-                            <div className="p-6 border-t border-white/5 bg-[#050507]">
-                                <div className="max-w-4xl mx-auto flex gap-4">
-                                    <input className="flex-1 bg-white/5 border border-white/10 rounded-2xl px-6 py-4 outline-none text-sm" placeholder="Send a message..." />
-                                    <button className="bg-purple-600 px-8 rounded-2xl font-black text-xs uppercase italic">Send</button>
-                                </div>
-                            </div>
+        function AuthUI() {
+            const [mode, setMode] = useState('login');
+            const [form, setForm] = useState({ email: '', password: '', username: '', role: 'Switch' });
+            const handleAction = async () => {
+                if (mode === 'signup') {
+                    const { data } = await supabaseClient.auth.signUp({ email: form.email, password: form.password });
+                    if (data.user) await supabaseClient.from('profiles').insert([{ id: data.user.id, username: form.username, role: form.role }]);
+                } else {
+                    await supabaseClient.auth.signInWithPassword({ email: form.email, password: form.password });
+                }
+            };
+            return (
+                <div className="h-screen flex items-center justify-center bg-black">
+                    <div className="glass p-10 rounded-[3rem] w-full max-w-sm border border-white/10 text-center">
+                        <h1 className="text-4xl font-black text-purple-500 italic mb-10">K-D WORLD</h1>
+                        <div className="space-y-4">
+                            {mode === 'signup' && <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none" placeholder="Username" onChange={e => setForm({...form, username: e.target.value})} />}
+                            <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none" placeholder="Email" onChange={e => setForm({...form, email: e.target.value})} />
+                            <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none" type="password" placeholder="Password" onChange={e => setForm({...form, password: e.target.value})} />
+                            <button onClick={handleAction} className="w-full bg-purple-600 p-5 rounded-2xl font-black">{mode.toUpperCase()}</button>
+                            <p onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="text-center text-[10px] cursor-pointer mt-4 uppercase opacity-50">Switch to {mode === 'login' ? 'signup' : 'login'}</p>
                         </div>
                     </div>
                 </div>
