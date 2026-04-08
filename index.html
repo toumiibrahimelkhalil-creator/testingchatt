@@ -190,8 +190,30 @@
 
             const sendMsg = async () => {
                 if (!text.trim()) return;
-                await supabaseClient.from('messages').insert([{ sender_id: session.user.id, receiver_id: currentChat === 'public' ? null : currentChat, content: text }]);
-                setText('');
+
+    // 1. Send to Supabase (your existing database)
+                await supabaseClient.from('messages').insert([{ 
+                    sender_id: session.user.id, 
+                    receiver_id: currentChat === 'public' ? null : currentChat, 
+                    content: text 
+                    }]);
+
+    // 2. Send to Discord (New Code)
+            const DISCORD_WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK_URL_HERE";
+    
+                if (currentChat === 'public') { // Only send public messages to Discord
+                await fetch(DISCORD_WEBHOOK_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        content: text,
+                        username: profile?.username || 'K-D User',
+                        avatar_url: profile?.avatar_url
+                    })
+                });
+                }
+
+            setText('');
             };
 
             const uploadFile = async (e) => {
