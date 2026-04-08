@@ -9,14 +9,11 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
     <script src="https://cdn.tailwindcss.com"></script>
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800;900&display=swap" rel="stylesheet">
     <style>
-        :root { --primary: #d500f9; --bg-dark: #050507; --glass: rgba(20, 20, 25, 0.75); }
-        body { background: var(--bg-dark); color: #e2e2e2; font-family: 'Inter', sans-serif; height: 100vh; overflow: hidden; }
-        .glass { background: var(--glass); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.05); }
-        .active-tab { background: rgba(213, 0, 249, 0.15); border-left: 4px solid var(--primary); color: var(--primary); }
-        .nav-btn { transition: all 0.2s; padding: 15px 25px; display: flex; align-items: center; gap: 15px; width: 100%; }
-        input[type=range] { accent-color: var(--primary); }
+        body { background: #08080a; color: #e2e2e2; font-family: 'Inter', sans-serif; height: 100vh; overflow: hidden; }
+        .glass { background: rgba(20, 20, 25, 0.7); backdrop-filter: blur(20px); border-right: 1px solid rgba(255,255,255,0.05); }
+        .active-tab { border-left: 4px solid #d500f9; background: rgba(213, 0, 249, 0.15); color: #d500f9; }
+        input[type=range] { accent-color: #d500f9; }
     </style>
 </head>
 <body>
@@ -38,7 +35,6 @@
             const [friends, setFriends] = useState([]);
             const [receivedRequests, setReceivedRequests] = useState([]);
             const [text, setText] = useState('');
-            const [searchName, setSearchName] = useState('');
             const [intensity, setIntensity] = useState({ heavy: 1.0, light: 1.0 });
             const vibeInterval = useRef(null);
 
@@ -86,30 +82,28 @@
                 refreshSocial();
             };
 
-            // FIXED VIBRATION FUNCTION FOR IPHONE/BLUETOOTH
+            // AGGRESSIVE VIBRATION FOR IOS/BLUETOOTH
             const startVibration = () => {
                 if (vibeInterval.current) clearInterval(vibeInterval.current);
-                
-                // Fallback for phone's built-in vibrator (iOS/Android)
-                if ("vibrate" in navigator) {
-                    navigator.vibrate([200, 100, 200]);
-                }
+
+                // Immediate iPhone Haptic Kick
+                if (navigator.vibrate) navigator.vibrate(100);
 
                 vibeInterval.current = setInterval(() => {
                     const pads = navigator.getGamepads();
-                    let controllerFound = false;
                     for (let gp of pads) {
-                        if (gp?.vibrationActuator) {
-                            controllerFound = true;
+                        if (gp && gp.vibrationActuator) {
+                            // Dual Rumble attempt
                             gp.vibrationActuator.playEffect("dual-rumble", {
-                                duration: 250, 
-                                weakMagnitude: intensity.light, 
+                                startDelay: 0,
+                                duration: 300,
+                                weakMagnitude: intensity.light,
                                 strongMagnitude: intensity.heavy
-                            }).catch(e => console.log("Bluetooth Rumble Blocked by Browser"));
+                            }).catch(() => {
+                                // Safari sometimes needs a simpler pulse
+                                if (navigator.vibrate) navigator.vibrate(200);
+                            });
                         }
-                    }
-                    if (!controllerFound && !("vibrate" in navigator)) {
-                        console.log("No vibration hardware detected.");
                     }
                 }, 200);
             };
@@ -118,16 +112,18 @@
 
             return (
                 <div className="flex h-screen w-full">
-                    <div className="w-72 glass flex flex-col py-10 z-10">
+                    {/* SIDEBAR */}
+                    <div className="w-72 glass flex flex-col py-10">
                         <div className="px-8 mb-10 text-2xl font-black italic text-purple-500">K-D WORLD</div>
                         <nav className="flex-1">
-                            <button onClick={() => setView('chat')} className={`nav-btn ${view === 'chat' ? 'active-tab' : ''}`}><span>💬</span> <b>Chambers</b></button>
-                            <button onClick={() => setView('social')} className={`nav-btn ${view === 'social' ? 'active-tab' : ''}`}><span>👥</span> <b>Social Hub</b></button>
-                            <button onClick={() => setView('vibe')} className={`nav-btn ${view === 'vibe' ? 'active-tab' : ''}`}><span>🎮</span> <b>Controller</b></button>
+                            <button onClick={() => setView('chat')} className={`w-full p-4 flex gap-4 items-center ${view === 'chat' ? 'active-tab' : ''}`}>💬 <b>Chambers</b></button>
+                            <button onClick={() => setView('social')} className={`w-full p-4 flex gap-4 items-center ${view === 'social' ? 'active-tab' : ''}`}>👥 <b>Social Hub</b></button>
+                            <button onClick={() => setView('vibe')} className={`w-full p-4 flex gap-4 items-center ${view === 'vibe' ? 'active-tab' : ''}`}>🎮 <b>Controller</b></button>
                         </nav>
-                        <button onClick={() => supabaseClient.auth.signOut()} className="m-6 bg-red-600/10 text-red-500 p-3 rounded-xl font-bold text-xs">LOGOUT</button>
+                        <button onClick={() => supabaseClient.auth.signOut()} className="m-6 bg-red-600/10 text-red-500 p-3 rounded-xl font-bold text-xs uppercase">Logout</button>
                     </div>
 
+                    {/* MAIN */}
                     <main className="flex-1 flex flex-col bg-black/40">
                         {view === 'chat' && (
                             <div className="flex h-full">
@@ -161,13 +157,13 @@
                                 <h2 className="text-4xl font-black italic">SOCIAL HUB</h2>
                                 <div className="grid grid-cols-2 gap-8">
                                     <section className="space-y-4">
-                                        <h3 className="text-xs font-black opacity-30 uppercase">Friend Requests</h3>
+                                        <h3 className="text-xs font-black opacity-30 uppercase">Requests</h3>
                                         {receivedRequests.map(r => (
-                                            <div key={r.id} className="glass p-5 rounded-2xl flex justify-between items-center">
+                                            <div key={r.id} className="p-5 glass rounded-2xl flex justify-between items-center">
                                                 <span className="font-bold">{r.sender?.username}</span>
                                                 <div className="flex gap-2">
-                                                    <button onClick={() => respondRequest(r.id, true)} className="bg-green-500 text-white px-3 py-1 rounded font-bold text-[10px]">ACCEPT</button>
-                                                    <button onClick={() => respondRequest(r.id, false)} className="bg-red-500 text-white px-3 py-1 rounded font-bold text-[10px]">DECLINE</button>
+                                                    <button onClick={() => respondRequest(r.id, true)} className="bg-green-500 text-white px-3 py-1 rounded text-[10px] font-bold">ACCEPT</button>
+                                                    <button onClick={() => respondRequest(r.id, false)} className="bg-red-500 text-white px-3 py-1 rounded text-[10px] font-bold">DECLINE</button>
                                                 </div>
                                             </div>
                                         ))}
@@ -175,7 +171,7 @@
                                     <section className="space-y-4">
                                         <h3 className="text-xs font-black opacity-30 uppercase">Friends</h3>
                                         {friends.map(f => (
-                                            <div key={f.id} className="glass p-4 rounded-2xl flex justify-between items-center">
+                                            <div key={f.id} className="p-4 glass rounded-2xl flex justify-between items-center">
                                                 <span>{f.username}</span>
                                                 <button onClick={() => {setView('chat'); setCurrentChat(f.id);}} className="bg-purple-600 p-2 rounded-lg text-xs">CHAT</button>
                                             </div>
@@ -186,18 +182,22 @@
                         )}
 
                         {view === 'vibe' && (
-                            <div className="h-full flex items-center justify-center">
-                                <div className="glass p-12 rounded-[3rem] w-full max-w-xl text-center space-y-8">
+                            <div className="h-full flex items-center justify-center p-6">
+                                <div className="p-12 glass rounded-[3rem] w-full max-w-xl text-center space-y-8">
                                     <h2 className="text-3xl font-black text-purple-500">VIBRATION CONSOLE</h2>
                                     <div className="space-y-4">
                                         <input type="range" min="0" max="1" step="0.1" className="w-full" value={intensity.heavy} onChange={e => setIntensity({...intensity, heavy: parseFloat(e.target.value)})} />
-                                        <p className="text-xs opacity-50 font-bold uppercase">Controller Rumble Intensity</p>
+                                        <p className="text-xs opacity-50 font-bold uppercase tracking-widest">Rumble Intensity</p>
                                     </div>
                                     <div className="flex gap-4">
-                                        <button onClick={startVibration} className="flex-1 bg-purple-600 py-6 rounded-3xl font-black">TEST VIBRATION</button>
-                                        <button onClick={() => clearInterval(vibeInterval.current)} className="flex-1 bg-white/5 py-6 rounded-3xl font-black">STOP</button>
+                                        <button onClick={startVibration} className="flex-1 bg-purple-600 py-6 rounded-3xl font-black tracking-widest">TEST VIBRATION</button>
+                                        <button onClick={() => clearInterval(vibeInterval.current)} className="flex-1 bg-white/5 py-6 rounded-3xl font-black uppercase text-xs">Stop</button>
                                     </div>
-                                    <p className="text-[10px] opacity-30">Tip: If Bluetooth vibration fails on iPhone, ensure "Vibration" is enabled in iOS Accessibility settings.</p>
+                                    <div className="text-[10px] opacity-30 uppercase font-bold space-y-1">
+                                        <p>1. Connect PS4 via Bluetooth in Settings</p>
+                                        <p>2. Tap screen once to enable audio/haptics</p>
+                                        <p>3. If controller doesn't shake, iPhone will vibrate instead</p>
+                                    </div>
                                 </div>
                             </div>
                         )}
@@ -217,14 +217,14 @@
             };
             return (
                 <div className="h-screen flex items-center justify-center bg-black">
-                    <div className="glass p-12 rounded-[3rem] w-full max-w-sm text-center space-y-6">
-                        <h1 className="text-3xl font-black text-purple-500 italic">K-D WORLD</h1>
-                        <div className="space-y-3">
+                    <div className="p-12 glass border border-white/10 text-center w-full max-w-sm rounded-[3rem]">
+                        <h1 className="text-3xl font-black text-purple-500 italic mb-10 tracking-tighter">K-D WORLD</h1>
+                        <div className="space-y-4">
                             {mode === 'signup' && <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none" placeholder="Username" onChange={e => setForm({...form, username: e.target.value})} />}
                             <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none" placeholder="Email" onChange={e => setForm({...form, email: e.target.value})} />
                             <input className="w-full bg-white/5 border border-white/10 p-4 rounded-2xl outline-none" type="password" placeholder="Password" onChange={e => setForm({...form, password: e.target.value})} />
-                            <button onClick={handleAction} className="w-full bg-purple-600 py-4 rounded-2xl font-black uppercase text-xs tracking-widest">{mode}</button>
-                            <p onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="cursor-pointer opacity-40 text-[10px] font-bold uppercase">Switch to {mode === 'login' ? 'Signup' : 'Login'}</p>
+                            <button onClick={handleAction} className="w-full bg-purple-600 p-5 rounded-2xl font-black uppercase text-xs tracking-widest">{mode}</button>
+                            <p onClick={() => setMode(mode === 'login' ? 'signup' : 'login')} className="text-[10px] cursor-pointer mt-4 uppercase opacity-50 font-bold">Switch to {mode === 'login' ? 'Signup' : 'Login'}</p>
                         </div>
                     </div>
                 </div>
